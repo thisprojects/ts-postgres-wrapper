@@ -7,7 +7,11 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "test": "node --test"
+    "test": "npm run unit-test && npm run integration-test",
+    "unit-test": "npx ts-node ./tests/unit_test.ts",
+    "integration-test": "npx ts-node ./tests/integration_test.ts",
+    "test:unit": "npx ts-node test.ts",
+    "test:integration": "npx ts-node integration-test.ts"
   },
   "keywords": [
     "postgres",
@@ -24,6 +28,7 @@
   "devDependencies": {
     "@types/pg": "^8.15.5",
     "pg": "^8.16.3",
-    "typescript": "^5.3.0"
+    "typescript": "^5.3.0",
+    "ts-node": "^10.9.0"
   }
 }
