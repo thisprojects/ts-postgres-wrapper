@@ -9,9 +9,7 @@
     "dev": "tsc --watch",
     "test": "npm run unit-test && npm run integration-test",
     "unit-test": "npx ts-node ./tests/unit_test.ts",
-    "integration-test": "npx ts-node ./tests/integration_test.ts",
-    "test:unit": "npx ts-node test.ts",
-    "test:integration": "npx ts-node integration-test.ts"
+    "integration-test": "npx ts-node ./tests/integration_test.ts"
   },
   "keywords": [
     "postgres",
