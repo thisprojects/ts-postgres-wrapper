@@ -1,4 +1,4 @@
-import { Pool, QueryResultRow } from "pg";
+import { Pool } from "pg";
 
 /**
  * Extract column names from a table type
