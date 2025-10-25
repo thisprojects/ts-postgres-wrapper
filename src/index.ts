@@ -234,6 +234,33 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
     const setColumns = Object.keys(data);
     const whereColumns = Object.keys(where);
 
+    // Validation: Prevent empty WHERE clauses to avoid updating all rows
+    if (whereColumns.length === 0) {
+      throw new Error(
+        `Update operation requires at least one WHERE condition. ` +
+          `To update all rows intentionally, use raw SQL: ` +
+          `db.raw("UPDATE ${String(tableName)} SET ... WHERE true")`
+      );
+    }
+
+    // Validation: Ensure WHERE values are not null/undefined
+    const invalidWhereConditions = whereColumns.filter(
+      (col) => where[col] === null || where[col] === undefined
+    );
+    if (invalidWhereConditions.length > 0) {
+      throw new Error(
+        `WHERE conditions cannot have null or undefined values. ` +
+          `Invalid columns: ${invalidWhereConditions.join(", ")}`
+      );
+    }
+
+    // Validation: Ensure we have data to set
+    if (setColumns.length === 0) {
+      throw new Error(
+        "Update operation requires at least one column to update"
+      );
+    }
+
     const setClause = setColumns
       .map((col, index) => `${col} = $${index + 1}`)
       .join(", ");
@@ -262,6 +289,27 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
     where: Partial<Schema[T]>
   ): Promise<Schema[T][]> {
     const whereColumns = Object.keys(where);
+
+    // Validation: Prevent empty WHERE clauses to avoid deleting all rows
+    if (whereColumns.length === 0) {
+      throw new Error(
+        `Delete operation requires at least one WHERE condition. ` +
+          `To delete all rows intentionally, use raw SQL: ` +
+          `db.raw("DELETE FROM ${String(tableName)} WHERE true")`
+      );
+    }
+
+    // Validation: Ensure WHERE values are not null/undefined
+    const invalidWhereConditions = whereColumns.filter(
+      (col) => where[col] === null || where[col] === undefined
+    );
+    if (invalidWhereConditions.length > 0) {
+      throw new Error(
+        `WHERE conditions cannot have null or undefined values. ` +
+          `Invalid columns: ${invalidWhereConditions.join(", ")}`
+      );
+    }
+
     const whereClause = whereColumns
       .map((col, index) => `${col} = $${index + 1}`)
       .join(" AND ");

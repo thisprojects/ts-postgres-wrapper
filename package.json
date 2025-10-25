@@ -7,9 +7,10 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "test": "npm run unit-test && npm run integration-test",
+    "test": "npm run unit-test && npm run integration-test && npm run empty-where-test",
     "unit-test": "npx ts-node ./tests/unit_test.ts",
-    "integration-test": "npx ts-node ./tests/integration_test.ts"
+    "integration-test": "npx ts-node ./tests/integration_test.ts",
+    "empty-where-test": "npx ts-node ./tests/empty_where_test.ts"
   },
   "keywords": [
     "postgres",
