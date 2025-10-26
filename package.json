@@ -1,33 +1,20 @@
 {
   "name": "postgres-query-builder-ts",
   "version": "0.1.0",
-  "description": "TypeScript wrapper for type-safe queries with node-postgres",
+  "description": "TypeScript PostgreSQL Query Builder with Jest Tests",
   "main": "dist/index.js",
-  "types": "dist/index.d.ts",
   "scripts": {
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
     "build": "tsc",
-    "dev": "tsc --watch",
-    "test": "npm run unit-test && npm run integration-test && npm run empty-where-test",
-    "unit-test": "npx ts-node ./tests/unit_test.ts",
-    "integration-test": "npx ts-node ./tests/integration_test.ts",
-    "empty-where-test": "npx ts-node ./tests/empty_where_test.ts"
-  },
-  "keywords": [
-    "postgres",
-    "pg",
-    "typescript",
-    "type-safe",
-    "database"
-  ],
-  "author": "",
-  "license": "MIT",
-  "peerDependencies": {
-    "pg": "^8.0.0"
+    "clean": "rm -rf dist"
   },
   "devDependencies": {
-    "@types/pg": "^8.15.5",
-    "pg": "^8.16.3",
-    "typescript": "^5.3.0",
-    "ts-node": "^10.9.0"
+    "@types/jest": "^29.5.0",
+    "@types/node": "^18.15.0",
+    "jest": "^29.5.0",
+    "ts-jest": "^29.1.0",
+    "typescript": "^5.0.0"
   }
 }
