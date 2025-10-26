@@ -422,6 +422,58 @@ export class TypedQuery<
   }
 
   /**
+   * Get minimum value for a column
+   */
+  min<K extends ColumnNames<Row>>(column: K): TypedQuery<TableName, { min: Row[K] }, Schema>;
+  min(column: string): TypedQuery<TableName, { min: any }, Schema>;
+  min(column: any): TypedQuery<TableName, { min: any }, Schema> {
+    const qualifiedColumn = this.qualifyColumnName(String(column));
+    return this.clone<{ min: any }>().select(`MIN(${qualifiedColumn}) as min`);
+  }
+
+  /**
+   * Get maximum value for a column
+   */
+  max<K extends ColumnNames<Row>>(column: K): TypedQuery<TableName, { max: Row[K] }, Schema>;
+  max(column: string): TypedQuery<TableName, { max: any }, Schema>;
+  max(column: any): TypedQuery<TableName, { max: any }, Schema> {
+    const qualifiedColumn = this.qualifyColumnName(String(column));
+    return this.clone<{ max: any }>().select(`MAX(${qualifiedColumn}) as max`);
+  }
+
+  /**
+   * Get sum of values for a column
+   */
+  sum<K extends ColumnNames<Row>>(column: K): TypedQuery<TableName, { sum: Row[K] }, Schema>;
+  sum(column: string): TypedQuery<TableName, { sum: any }, Schema>;
+  sum(column: any): TypedQuery<TableName, { sum: any }, Schema> {
+    const qualifiedColumn = this.qualifyColumnName(String(column));
+    return this.clone<{ sum: any }>().select(`SUM(${qualifiedColumn}) as sum`);
+  }
+
+  /**
+   * Get average value for a column
+   */
+  avg<K extends ColumnNames<Row>>(column: K): TypedQuery<TableName, { avg: number }, Schema>;
+  avg(column: string): TypedQuery<TableName, { avg: number }, Schema>;
+  avg(column: any): TypedQuery<TableName, { avg: number }, Schema> {
+    const qualifiedColumn = this.qualifyColumnName(String(column));
+    return this.clone<{ avg: number }>().select(`AVG(${qualifiedColumn}) as avg`);
+  }
+
+  /**
+   * Aggregate multiple columns with custom aliases
+   */
+  aggregate<T extends Record<string, any>>(
+    aggregations: { [K in keyof T]: string }
+  ): TypedQuery<TableName, T, Schema> {
+    const newQuery = this.clone<T>();
+    newQuery.selectedColumns = Object.entries(aggregations)
+      .map(([alias, expr]) => `${expr} as ${alias}`);
+    return newQuery;
+  }
+
+  /**
    * Get the SQL query string (for debugging)
    */
   toSQL(): { query: string; params: any[] } {

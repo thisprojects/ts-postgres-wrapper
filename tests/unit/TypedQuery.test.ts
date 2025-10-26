@@ -1099,6 +1099,291 @@ describe("TypedQuery", () => {
     });
   });
 
+  describe("Aggregate Functions", () => {
+    it("should handle MIN aggregate", async () => {
+      mockPool.setMockResults([{ min: 10 }]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      const result = await query.min("age").execute();
+
+      expect(mockPool).toHaveExecutedQuery(
+        "SELECT MIN(age) as min FROM users"
+      );
+      expect(result[0].min).toBe(10);
+    });
+
+    it("should handle MAX aggregate", async () => {
+      mockPool.setMockResults([{ max: 50 }]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      const result = await query.max("age").execute();
+
+      expect(mockPool).toHaveExecutedQuery(
+        "SELECT MAX(age) as max FROM users"
+      );
+      expect(result[0].max).toBe(50);
+    });
+
+    it("should handle SUM aggregate", async () => {
+      mockPool.setMockResults([{ sum: 1000 }]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      const result = await query.sum("age").execute();
+
+      expect(mockPool).toHaveExecutedQuery(
+        "SELECT SUM(age) as sum FROM users"
+      );
+      expect(result[0].sum).toBe(1000);
+    });
+
+    it("should handle AVG aggregate", async () => {
+      mockPool.setMockResults([{ avg: 25.5 }]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      const result = await query.avg("age").execute();
+
+      expect(mockPool).toHaveExecutedQuery(
+        "SELECT AVG(age) as avg FROM users"
+      );
+      expect(result[0].avg).toBe(25.5);
+    });
+
+    it("should handle aggregate with WHERE clause", async () => {
+      mockPool.setMockResults([{ min: 20 }]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query
+        .min("age")
+        .where("active", "=", true)
+        .execute();
+
+      expect(mockPool).toHaveExecutedQueryWithParams(
+        "SELECT MIN(age) as min FROM users WHERE active = $1",
+        [true]
+      );
+    });
+
+    it("should handle aggregate with GROUP BY", async () => {
+      mockPool.setMockResults([{ min: 18 }]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query
+        .min("age")
+        .groupBy("department")
+        .execute();
+
+      expect(mockPool).toHaveExecutedQuery(
+        "SELECT MIN(age) as min FROM users GROUP BY department"
+      );
+    });
+
+    it("should handle aggregate with JOIN", async () => {
+      mockPool.setMockResults([{ max: 100 }]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query
+        .max("posts.likes")
+        .innerJoin("posts", "users.id", "posts.user_id")
+        .execute();
+
+      expect(mockPool).toHaveExecutedQuery(
+        "SELECT MAX(posts.likes) as max FROM users INNER JOIN posts ON users.id = posts.user_id"
+      );
+    });
+
+    it("should handle multiple aggregates using aggregate method", async () => {
+      mockPool.setMockResults([{
+        total_users: "100",
+        avg_age: 25.5,
+        min_age: 18,
+        max_age: 65
+      }]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      const result = await query.aggregate({
+        total_users: "COUNT(*)",
+        avg_age: "AVG(age)",
+        min_age: "MIN(age)",
+        max_age: "MAX(age)"
+      }).execute();
+
+      expect(mockPool).toHaveExecutedQuery(
+        "SELECT COUNT(*) as total_users, AVG(age) as avg_age, MIN(age) as min_age, MAX(age) as max_age FROM users"
+      );
+      expect(result[0]).toEqual({
+        total_users: "100",
+        avg_age: 25.5,
+        min_age: 18,
+        max_age: 65
+      });
+    });
+
+    it("should handle aggregate with HAVING clause", async () => {
+      mockPool.setMockResults([{
+        dept: "Engineering",
+        avg_salary: 75000,
+        headcount: 10
+      }]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query
+        .aggregate({
+          dept: "department",
+          avg_salary: "AVG(salary)",
+          headcount: "COUNT(*)"
+        })
+        .groupBy("department")
+        .having("COUNT(*)", ">", 5)
+        .having("AVG(salary)", ">", 50000)
+        .execute();
+
+      expect(mockPool).toHaveExecutedQueryWithParams(
+        "SELECT department as dept, AVG(salary) as avg_salary, COUNT(*) as headcount FROM users GROUP BY department HAVING COUNT(*) > $1 AND AVG(salary) > $2",
+        [5, 50000]
+      );
+    });
+
+    it("should handle aggregate with GROUP BY and ORDER BY", async () => {
+      mockPool.setMockResults([{
+        dept: "Engineering",
+        total_salary: 1000000
+      }]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query
+        .aggregate({
+          dept: "department",
+          total_salary: "SUM(salary)"
+        })
+        .groupBy("department")
+        .orderBy("total_salary", "DESC")
+        .execute();
+
+      expect(mockPool).toHaveExecutedQuery(
+        "SELECT department as dept, SUM(salary) as total_salary FROM users GROUP BY department ORDER BY total_salary DESC"
+      );
+    });
+
+    it("should handle aggregate with type validation", async () => {
+      interface DeptStats {
+        dept: string;
+        avg_salary: number;
+        headcount: number;
+      }
+
+      mockPool.setMockResults([{
+        dept: "Engineering",
+        avg_salary: 75000,
+        headcount: 10
+      }]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      const result = await query
+        .aggregate<DeptStats>({
+          dept: "department",
+          avg_salary: "AVG(salary)",
+          headcount: "COUNT(*)"
+        })
+        .groupBy("department")
+        .execute();
+
+      expect(result[0].avg_salary).toBe(75000);
+      expect(result[0].headcount).toBe(10);
+      expect(typeof result[0].dept).toBe("string");
+    });
+
+    it("should handle aggregate with null/zero results", async () => {
+      mockPool.setMockResults([{
+        min_salary: null,
+        max_salary: null,
+        avg_salary: null,
+        total_salary: 0,
+        headcount: 0
+      }]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      const result = await query
+        .aggregate({
+          min_salary: "MIN(salary)",
+          max_salary: "MAX(salary)",
+          avg_salary: "AVG(salary)",
+          total_salary: "COALESCE(SUM(salary), 0)",
+          headcount: "COUNT(*)"
+        })
+        .where("department", "=", "NonexistentDept")
+        .execute();
+
+      expect(result[0].min_salary).toBeNull();
+      expect(result[0].max_salary).toBeNull();
+      expect(result[0].avg_salary).toBeNull();
+      expect(result[0].total_salary).toBe(0);
+      expect(result[0].headcount).toBe(0);
+    });
+
+    it("should handle aggregate with complex expressions", async () => {
+      mockPool.setMockResults([{
+        dept: "Engineering",
+        avg_tenure: 5.5,
+        senior_count: 8,
+        salary_variance: 1500.75
+      }]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query
+        .aggregate({
+          dept: "department",
+          avg_tenure: "AVG(EXTRACT(YEAR FROM NOW()) - EXTRACT(YEAR FROM hire_date))",
+          senior_count: "COUNT(CASE WHEN role = 'senior' THEN 1 END)",
+          salary_variance: "VARIANCE(salary)"
+        })
+        .groupBy("department")
+        .execute();
+
+      expect(mockPool).toHaveExecutedQuery(
+        "SELECT department as dept, AVG(EXTRACT(YEAR FROM NOW()) - EXTRACT(YEAR FROM hire_date)) as avg_tenure, COUNT(CASE WHEN role = 'senior' THEN 1 END) as senior_count, VARIANCE(salary) as salary_variance FROM users GROUP BY department"
+      );
+    });
+  });
+
   describe("Complex query combinations", () => {
     it("should handle complex query with all clauses", async () => {
       mockPool.setMockResults([]);
