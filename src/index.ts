@@ -654,6 +654,65 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
   }
 
   /**
+   * Insert or update data based on conflict columns
+   */
+  async upsert<T extends keyof Schema & string>(
+    tableName: T,
+    data: Partial<Schema[T]> | Partial<Schema[T]>[],
+    conflictColumns: (keyof Schema[T] & string)[],
+    updateColumns?: (keyof Schema[T] & string)[]
+  ): Promise<Schema[T][]> {
+    const records = Array.isArray(data) ? data : [data];
+    if (records.length === 0) return [];
+
+    // Validate conflict columns exist
+    if (conflictColumns.length === 0) {
+      throw new Error("At least one conflict column must be specified");
+    }
+
+    const columns = Object.keys(records[0]);
+    const columnsToUpdate = updateColumns || columns.filter(col => !conflictColumns.includes(col as any));
+
+    // Validate we have columns to update
+    if (columnsToUpdate.length === 0) {
+      throw new Error("No columns to update in UPSERT operation");
+    }
+
+    // Build VALUES expression
+    const values = records
+      .map((record, recordIndex) => {
+        return columns
+          .map(
+            (_, colIndex) => `$${recordIndex * columns.length + colIndex + 1}`
+          )
+          .join(", ");
+      })
+      .map((row) => `(${row})`)
+      .join(", ");
+
+    // Build UPDATE SET expression
+    const setClause = columnsToUpdate
+      .map((col) => `${col} = EXCLUDED.${col}`)
+      .join(", ");
+
+    // Build query
+    const query = `
+      INSERT INTO ${String(tableName)} (${columns.join(", ")})
+      VALUES ${values}
+      ON CONFLICT (${conflictColumns.join(", ")})
+      DO UPDATE SET ${setClause}
+      RETURNING *
+    `;
+
+    const params = records.flatMap((record) =>
+      columns.map((col) => record[col])
+    );
+
+    const result = await this.pool.query<Schema[T]>(query, params);
+    return result.rows;
+  }
+
+  /**
    * Raw query with manual type annotation
    */
   async raw<T extends Record<string, any> = Record<string, any>>(

@@ -151,6 +151,105 @@ describe("TypedPg CRUD Operations", () => {
     });
   });
 
+  describe("UPSERT operations", () => {
+    it("should handle single row upsert", async () => {
+      const mockUser = createMockUser();
+      mockPool.setMockResults([mockUser]);
+
+      await db.upsert(
+        "users",
+        { id: 1, email: "test@example.com", name: "Test User" },
+        ["email"]
+      );
+
+      const sql = mockPool.getLastQuery().text.replace(/\s+/g, " ").trim();
+      expect(sql).toContain("INSERT INTO users");
+      expect(sql).toContain("ON CONFLICT (email)");
+      expect(sql).toContain("RETURNING *");
+      expect(mockPool.getLastQuery().values).toEqual([1, "test@example.com", "Test User"]);
+    });
+
+    it("should handle multiple row upsert", async () => {
+      const mockUsers = [createMockUser(), createMockUser()];
+      mockPool.setMockResults(mockUsers);
+
+      await db.upsert(
+        "users",
+        [
+          { id: 1, email: "test1@example.com", name: "Test User 1" },
+          { id: 2, email: "test2@example.com", name: "Test User 2" }
+        ],
+        ["email"]
+      );
+
+      const sql = mockPool.getLastQuery().text.replace(/\s+/g, " ").trim();
+      expect(sql).toContain("INSERT INTO users");
+      expect(sql).toContain("VALUES ($1, $2, $3), ($4, $5, $6)");
+      expect(sql).toContain("ON CONFLICT (email)");
+      expect(mockPool.getLastQuery().values).toEqual([
+        1, "test1@example.com", "Test User 1",
+        2, "test2@example.com", "Test User 2"
+      ]);
+    });
+
+    it("should handle multiple conflict columns", async () => {
+      const mockUser = createMockUser();
+      mockPool.setMockResults([mockUser]);
+
+      await db.upsert(
+        "users",
+        { id: 1, email: "test@example.com", name: "Test User" },
+        ["email", "name"]
+      );
+
+      const sql = mockPool.getLastQuery().text.replace(/\s+/g, " ").trim();
+      expect(sql).toContain("ON CONFLICT (email, name)");
+      expect(sql).toContain("DO UPDATE SET");
+      expect(sql).toContain("RETURNING *");
+      expect(mockPool.getLastQuery().values).toEqual([1, "test@example.com", "Test User"]);
+    });
+
+    it("should handle specific update columns", async () => {
+      const mockUser = createMockUser();
+      mockPool.setMockResults([mockUser]);
+
+      await db.upsert(
+        "users",
+        { id: 1, email: "test@example.com", name: "Test User", age: 25 },
+        ["email"],
+        ["name"] // Only update name on conflict
+      );
+
+      const sql = mockPool.getLastQuery().text.replace(/\s+/g, " ").trim();
+      expect(sql).toContain("ON CONFLICT (email)");
+      expect(sql).toContain("DO UPDATE SET name = EXCLUDED.name");
+      expect(sql).toContain("RETURNING *");
+      expect(mockPool.getLastQuery().values).toEqual([1, "test@example.com", "Test User", 25]);
+    });
+
+    it("should throw error with no conflict columns", async () => {
+      await expect(
+        db.upsert("users", { id: 1, name: "Test" }, [])
+      ).rejects.toThrow("At least one conflict column must be specified");
+    });
+
+    it("should throw error with no update columns", async () => {
+      await expect(
+        db.upsert(
+          "users",
+          { id: 1, email: "test@example.com" },
+          ["id", "email"] // All columns are in conflict
+        )
+      ).rejects.toThrow("No columns to update in UPSERT operation");
+    });
+
+    it("should return empty array for empty input", async () => {
+      const result = await db.upsert("users", [], ["email"]);
+      expect(result).toEqual([]);
+      expect(mockPool).not.toHaveExecutedQuery(expect.anything());
+    });
+  });
+
   describe("DELETE operations", () => {
     it("should delete records with WHERE clause", async () => {
       const deletedUser = createMockUser();
