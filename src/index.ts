@@ -42,6 +42,9 @@ export class TypedQuery<
   private joins: JoinConfig[] = [];
   private schema: Schema;
   private joinedTables: Set<string> = new Set();
+  private groupByColumns: string[] = [];
+  private havingClause: string = "";
+  private havingParams: any[] = [];
 
   constructor(
     pool: Pool,
@@ -79,6 +82,9 @@ export class TypedQuery<
     newQuery.paramCounter = this.paramCounter;
     newQuery.joins = [...this.joins];
     newQuery.joinedTables = new Set(this.joinedTables);
+    newQuery.groupByColumns = [...this.groupByColumns];
+    newQuery.havingClause = this.havingClause;
+    newQuery.havingParams = [...this.havingParams];
     return newQuery;
   }
 
@@ -285,6 +291,47 @@ export class TypedQuery<
   }
 
   /**
+   * Add GROUP BY clause (supports both typed columns and string-based columns)
+   */
+  groupBy<K extends ColumnNames<Row>>(...columns: K[]): this;
+  groupBy(...columns: string[]): this;
+  groupBy(...columns: any[]): this {
+    const qualifiedColumns = columns.map(col => this.qualifyColumnName(String(col)));
+    this.groupByColumns.push(...qualifiedColumns);
+    return this;
+  }
+
+  /**
+   * Add HAVING clause for aggregate conditions
+   */
+  having(
+    column: string,
+    operator: "=" | "!=" | ">" | "<" | ">=" | "<=" | "LIKE" | "ILIKE" | "IN",
+    value: any
+  ): this {
+    if (this.havingClause) {
+      this.havingClause += " AND ";
+    } else {
+      this.havingClause = " HAVING ";
+    }
+
+    const qualifiedColumn = this.qualifyColumnName(String(column));
+
+    if (operator === "IN" && Array.isArray(value)) {
+      const placeholders = value
+        .map(() => `$${this.paramCounter++}`)
+        .join(", ");
+      this.havingClause += `${qualifiedColumn} IN (${placeholders})`;
+      this.havingParams.push(...value);
+    } else {
+      this.havingClause += `${qualifiedColumn} ${operator} $${this.paramCounter}`;
+      this.havingParams.push(value);
+      this.paramCounter++;
+    }
+    return this;
+  }
+
+  /**
    * Qualify column name if needed
    */
   private qualifyColumnName(column: string): string {
@@ -333,15 +380,22 @@ export class TypedQuery<
    * Execute the query and return typed results
    */
   async execute(): Promise<Row[]> {
+    // Validate HAVING is only used with GROUP BY
+    if (this.havingClause && !this.groupByColumns.length) {
+      throw new Error("HAVING clause requires GROUP BY");
+    }
+
     const columns = this.selectedColumns.length
       ? this.selectedColumns.join(", ")
       : "*";
 
     const query = `SELECT ${columns} ${this.buildFromClause()}${
       this.whereClause
+    }${this.groupByColumns.length ? ` GROUP BY ${this.groupByColumns.join(", ")}` : ""}${
+      this.havingClause
     }${this.orderByClause}${this.limitClause}${this.offsetClause}`;
 
-    const result = await this.pool.query<Row>(query, this.whereParams);
+    const result = await this.pool.query<Row>(query, [...this.whereParams, ...this.havingParams]);
     return result.rows;
   }
 
@@ -377,9 +431,11 @@ export class TypedQuery<
 
     const query = `SELECT ${columns} ${this.buildFromClause()}${
       this.whereClause
+    }${this.groupByColumns.length ? ` GROUP BY ${this.groupByColumns.join(", ")}` : ""}${
+      this.havingClause
     }${this.orderByClause}${this.limitClause}${this.offsetClause}`;
 
-    return { query, params: this.whereParams };
+    return { query, params: [...this.whereParams, ...this.havingParams] };
   }
 }
 

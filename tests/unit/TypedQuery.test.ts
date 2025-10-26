@@ -892,6 +892,213 @@ describe("TypedQuery", () => {
     });
   });
 
+  describe("GROUP BY and HAVING", () => {
+    it("should handle basic GROUP BY", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query
+        .select("department", "COUNT(*) as user_count")
+        .groupBy("department")
+        .execute();
+
+      expect(mockPool).toHaveExecutedQuery(
+        "SELECT department, COUNT(*) as user_count FROM users GROUP BY department"
+      );
+    });
+
+    it("should handle GROUP BY with WHERE", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query
+        .select("department", "COUNT(*) as user_count")
+        .where("active", "=", true)
+        .groupBy("department")
+        .execute();
+
+      expect(mockPool).toHaveExecutedQueryWithParams(
+        "SELECT department, COUNT(*) as user_count FROM users WHERE active = $1 GROUP BY department",
+        [true]
+      );
+    });
+
+    it("should handle GROUP BY with multiple columns", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query
+        .select("department", "role", "COUNT(*) as user_count")
+        .groupBy("department", "role")
+        .execute();
+
+      expect(mockPool).toHaveExecutedQuery(
+        "SELECT department, role, COUNT(*) as user_count FROM users GROUP BY department, role"
+      );
+    });
+
+    it("should handle HAVING clause", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query
+        .select("department", "COUNT(*) as user_count")
+        .groupBy("department")
+        .having("COUNT(*)", ">", 5)
+        .execute();
+
+      expect(mockPool).toHaveExecutedQueryWithParams(
+        "SELECT department, COUNT(*) as user_count FROM users GROUP BY department HAVING COUNT(*) > $1",
+        [5]
+      );
+    });
+
+    it("should handle HAVING with multiple conditions", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query
+        .select("department", "COUNT(*) as user_count", "AVG(age) as avg_age")
+        .groupBy("department")
+        .having("COUNT(*)", ">", 5)
+        .having("AVG(age)", ">=", 30)
+        .execute();
+
+      expect(mockPool).toHaveExecutedQueryWithParams(
+        "SELECT department, COUNT(*) as user_count, AVG(age) as avg_age FROM users GROUP BY department HAVING COUNT(*) > $1 AND AVG(age) >= $2",
+        [5, 30]
+      );
+    });
+
+    it("should handle GROUP BY with JOINs", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query
+        .select("users.department", "COUNT(DISTINCT posts.id) as post_count")
+        .innerJoin("posts", "users.id", "posts.user_id")
+        .groupBy("users.department")
+        .having("COUNT(DISTINCT posts.id)", ">", 10)
+        .execute();
+
+      expect(mockPool).toHaveExecutedQueryWithParams(
+        "SELECT users.department, COUNT(DISTINCT posts.id) as post_count FROM users INNER JOIN posts ON users.id = posts.user_id GROUP BY users.department HAVING COUNT(DISTINCT posts.id) > $1",
+        [10]
+      );
+    });
+
+    it("should handle GROUP BY with ORDER BY", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query
+        .select("department", "COUNT(*) as user_count")
+        .groupBy("department")
+        .orderBy("user_count", "DESC")
+        .execute();
+
+      expect(mockPool).toHaveExecutedQuery(
+        "SELECT department, COUNT(*) as user_count FROM users GROUP BY department ORDER BY user_count DESC"
+      );
+    });
+
+    it("should handle GROUP BY with HAVING and ORDER BY", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query
+        .select("department", "COUNT(*) as user_count")
+        .groupBy("department")
+        .having("COUNT(*)", ">", 10)
+        .orderBy("user_count", "DESC")
+        .execute();
+
+      expect(mockPool).toHaveExecutedQueryWithParams(
+        "SELECT department, COUNT(*) as user_count FROM users GROUP BY department HAVING COUNT(*) > $1 ORDER BY user_count DESC",
+        [10]
+      );
+    });
+
+    it("should handle GROUP BY with LIMIT and OFFSET", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query
+        .select("department", "COUNT(*) as user_count")
+        .groupBy("department")
+        .orderBy("user_count", "DESC")
+        .limit(5)
+        .offset(10)
+        .execute();
+
+      expect(mockPool).toHaveExecutedQuery(
+        "SELECT department, COUNT(*) as user_count FROM users GROUP BY department ORDER BY user_count DESC LIMIT 5 OFFSET 10"
+      );
+    });
+
+    it("should handle HAVING with IN operator", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query
+        .select("department", "COUNT(*) as user_count")
+        .groupBy("department")
+        .having("COUNT(*)", "IN", [5, 10, 15])
+        .execute();
+
+      expect(mockPool).toHaveExecutedQueryWithParams(
+        "SELECT department, COUNT(*) as user_count FROM users GROUP BY department HAVING COUNT(*) IN ($1, $2, $3)",
+        [5, 10, 15]
+      );
+    });
+
+    it("should throw error when using HAVING without GROUP BY", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query
+          .select("department", "COUNT(*) as user_count")
+          .having("COUNT(*)", ">", 5)
+          .execute();
+      }).rejects.toThrow("HAVING clause requires GROUP BY");
+    });
+  });
+
   describe("Complex query combinations", () => {
     it("should handle complex query with all clauses", async () => {
       mockPool.setMockResults([]);
