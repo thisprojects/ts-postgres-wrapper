@@ -1,4 +1,4 @@
-import { TypedQuery } from "../../src/index";
+import { TypedQuery, TypedPg } from "../../src/index";
 import { MockPool, TestSchema, createMockUser } from "../test_utils";
 
 describe("TypedQuery", () => {
@@ -521,6 +521,82 @@ describe("TypedQuery", () => {
       });
     });
 
+    describe("Self JOINs", () => {
+      it("should handle self join with alias", async () => {
+        mockPool.setMockResults([]);
+
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+        await query
+          .innerJoin("users", "users.manager_id", "mgr.id", "mgr")
+          .execute();
+
+        expect(mockPool).toHaveExecutedQuery(
+          "SELECT * FROM users INNER JOIN users AS mgr ON users.manager_id = mgr.id"
+        );
+      });
+
+      it("should handle self join with complex conditions", async () => {
+        mockPool.setMockResults([]);
+
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+        await query
+          .select("users.id", "users.name", "mgr.name as manager_name")
+          .innerJoin("users", "users.manager_id", "mgr.id", "mgr")
+          .where("users.department", "=", "Engineering")
+          .orderBy("users.name")
+          .execute();
+
+        expect(mockPool).toHaveExecutedQueryWithParams(
+          "SELECT users.id, users.name, mgr.name as manager_name FROM users INNER JOIN users AS mgr ON users.manager_id = mgr.id WHERE users.department = $1 ORDER BY users.name ASC",
+          ["Engineering"]
+        );
+      });
+
+      it("should handle multiple self joins", async () => {
+        mockPool.setMockResults([]);
+
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+        await query
+          .select("users.name", "mgr.name as manager_name", "dir.name as director_name")
+          .innerJoin("users", "users.manager_id", "mgr.id", "mgr")
+          .innerJoin("users", "mgr.manager_id", "dir.id", "dir")
+          .execute();
+
+        expect(mockPool).toHaveExecutedQuery(
+          "SELECT users.name, mgr.name as manager_name, dir.name as director_name FROM users INNER JOIN users AS mgr ON users.manager_id = mgr.id INNER JOIN users AS dir ON mgr.manager_id = dir.id"
+        );
+      });
+
+      it("should handle self join with multiple conditions in WHERE clause", async () => {
+        mockPool.setMockResults([]);
+
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+        await query
+          .innerJoin("users", "users.manager_id", "mgr.id", "mgr")
+          .where("users.department", "=", "Engineering")
+          .where("mgr.department", "=", "Engineering")
+          .where("users.level", "<", 5) // Using a concrete value instead of unparameterized column reference
+          .execute();
+
+        expect(mockPool).toHaveExecutedQueryWithParams(
+          "SELECT * FROM users INNER JOIN users AS mgr ON users.manager_id = mgr.id WHERE users.department = $1 AND mgr.department = $2 AND users.level < $3",
+          ["Engineering", "Engineering", 5]
+        );
+      });
+    });
+
     describe("Multiple JOINs", () => {
       it("should handle multiple JOINs", async () => {
         mockPool.setMockResults([]);
@@ -718,6 +794,104 @@ describe("TypedQuery", () => {
     });
   });
 
+  describe("Advanced JOIN Operations", () => {
+    it("should handle JOINs with complex ON conditions", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query
+        .select("users.id", "users.name", "posts.title")
+        .innerJoin("posts", "users.id", "posts.user_id")
+        .where("users.active", "=", true)
+        .where("posts.published", "=", true)
+        .execute();
+
+      expect(mockPool).toHaveExecutedQueryWithParams(
+        "SELECT users.id, users.name, posts.title FROM users INNER JOIN posts ON users.id = posts.user_id WHERE users.active = $1 AND posts.published = $2",
+        [true, true]
+      );
+    });
+
+    it("should handle aggregate functions with JOINs", async () => {
+      mockPool.setMockResults([{ total_posts: "5" }]);
+
+      const db = new TypedPg<TestSchema>(mockPool as any);
+      await db.raw(
+        "SELECT users.id, users.name, COUNT(posts.id) as total_posts FROM users LEFT JOIN posts ON users.id = posts.user_id GROUP BY users.id, users.name"
+      );
+
+      expect(mockPool).toHaveExecutedQuery(
+        "SELECT users.id, users.name, COUNT(posts.id) as total_posts FROM users LEFT JOIN posts ON users.id = posts.user_id GROUP BY users.id, users.name"
+      );
+    });
+
+    it("should handle multiple aggregate functions with JOINs", async () => {
+      mockPool.setMockResults([{
+        total_posts: "10",
+        avg_likes: "25.5",
+        max_comments: "100"
+      }]);
+
+      const db = new TypedPg<TestSchema>(mockPool as any);
+      await db.raw(
+        "SELECT users.id, users.name, COUNT(DISTINCT posts.id) as total_posts, AVG(posts.likes) as avg_likes, MAX(posts.comment_count) as max_comments FROM users LEFT JOIN posts ON users.id = posts.user_id GROUP BY users.id, users.name HAVING COUNT(posts.id) > $1 ORDER BY avg_likes DESC",
+        [5]
+      );
+
+      expect(mockPool).toHaveExecutedQueryWithParams(
+        "SELECT users.id, users.name, COUNT(DISTINCT posts.id) as total_posts, AVG(posts.likes) as avg_likes, MAX(posts.comment_count) as max_comments FROM users LEFT JOIN posts ON users.id = posts.user_id GROUP BY users.id, users.name HAVING COUNT(posts.id) > $1 ORDER BY avg_likes DESC",
+        [5]
+      );
+    });
+
+    it("should handle window functions with JOINs", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query
+        .select(
+          "users.id",
+          "users.name",
+          "posts.title",
+          "ROW_NUMBER() OVER (PARTITION BY users.id ORDER BY posts.created_at DESC) as post_number"
+        )
+        .innerJoin("posts", "users.id", "posts.user_id")
+        .execute();
+
+      expect(mockPool).toHaveExecutedQuery(
+        "SELECT users.id, users.name, posts.title, ROW_NUMBER() OVER (PARTITION BY users.id ORDER BY posts.created_at DESC) as post_number FROM users INNER JOIN posts ON users.id = posts.user_id"
+      );
+    });
+
+    it("should handle JOINs with subqueries", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query
+        .select("users.id", "users.name", "recent_posts.title")
+        .innerJoin(
+          "(SELECT * FROM posts WHERE created_at >= NOW() - INTERVAL '7 days')",
+          "users.id",
+          "recent_posts.user_id",
+          "recent_posts"
+        )
+        .execute();
+
+      expect(mockPool).toHaveExecutedQuery(
+        "SELECT users.id, users.name, recent_posts.title FROM users INNER JOIN (SELECT * FROM posts WHERE created_at >= NOW() - INTERVAL '7 days') AS recent_posts ON users.id = recent_posts.user_id"
+      );
+    });
+  });
+
   describe("Complex query combinations", () => {
     it("should handle complex query with all clauses", async () => {
       mockPool.setMockResults([]);
@@ -740,6 +914,96 @@ describe("TypedQuery", () => {
       expect(mockPool).toHaveExecutedQueryWithParams(
         "SELECT id, name, email FROM users WHERE active = $1 AND age >= $2 OR id IN ($3, $4, $5) ORDER BY name ASC, created_at DESC LIMIT 10 OFFSET 20",
         [true, 18, 1, 2, 3]
+      );
+    });
+  });
+
+  describe("Query Composition", () => {
+    it("should build queries incrementally with WHERE clauses", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      const q1 = query.where("age", ">", 20);
+      await q1.execute();
+
+      expect(mockPool).toHaveExecutedQueryWithParams(
+        "SELECT * FROM users WHERE age > $1",
+        [20]
+      );
+
+      const q2 = q1.where("active", "=", true);
+      await q2.execute();
+
+      expect(mockPool).toHaveExecutedQueryWithParams(
+        "SELECT * FROM users WHERE age > $1 AND active = $2",
+        [20, true]
+      );
+    });
+
+    it("should build queries incrementally with multiple clauses", async () => {
+      mockPool.setMockResults([]);
+
+      const baseQuery = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      ).select("id", "name");
+
+      const q1 = baseQuery.where("active", "=", true);
+      const q2 = q1.orderBy("name", "ASC");
+      const q3 = q2.limit(10);
+
+      await q3.execute();
+
+      expect(mockPool).toHaveExecutedQueryWithParams(
+        "SELECT id, name FROM users WHERE active = $1 ORDER BY name ASC LIMIT 10",
+        [true]
+      );
+    });
+
+    it("should build queries incrementally with JOINs", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      const joinedQuery = query.innerJoin("posts", "users.id", "posts.user_id");
+      await joinedQuery.execute();
+
+      expect(mockPool).toHaveExecutedQuery(
+        "SELECT * FROM users INNER JOIN posts ON users.id = posts.user_id"
+      );
+
+      const filteredJoinedQuery = joinedQuery.where("posts.published", "=", true);
+      await filteredJoinedQuery.execute();
+
+      expect(mockPool).toHaveExecutedQueryWithParams(
+        "SELECT * FROM users INNER JOIN posts ON users.id = posts.user_id WHERE posts.published = $1",
+        [true]
+      );
+    });
+
+    it("should accumulate WHERE conditions", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      ).where("active", "=", true);
+
+      const q1 = query.where("age", ">", 20);
+      const q2 = q1.where("name", "LIKE", "%john%");
+
+      await q2.execute();
+
+      expect(mockPool).toHaveExecutedQueryWithParams(
+        "SELECT * FROM users WHERE active = $1 AND age > $2 AND name LIKE $3",
+        [true, 20, "%john%"]
       );
     });
   });
