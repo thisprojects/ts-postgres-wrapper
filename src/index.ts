@@ -45,6 +45,7 @@ export class TypedQuery<
   private groupByColumns: string[] = [];
   private havingClause: string = "";
   private havingParams: any[] = [];
+  private windowFunctions: string[] = [];
 
   constructor(
     pool: Pool,
@@ -85,6 +86,7 @@ export class TypedQuery<
     newQuery.groupByColumns = [...this.groupByColumns];
     newQuery.havingClause = this.havingClause;
     newQuery.havingParams = [...this.havingParams];
+    newQuery.windowFunctions = [...this.windowFunctions];
     return newQuery;
   }
 
@@ -385,9 +387,13 @@ export class TypedQuery<
       throw new Error("HAVING clause requires GROUP BY");
     }
 
-    const columns = this.selectedColumns.length
+    let columns = this.selectedColumns.length
       ? this.selectedColumns.join(", ")
       : "*";
+
+    if (this.windowFunctions.length > 0) {
+      columns += `, ${this.windowFunctions.map((w, i) => `${w} as window_${i + 1}`).join(", ")}`;
+    }
 
     const query = `SELECT ${columns} ${this.buildFromClause()}${
       this.whereClause
@@ -471,6 +477,64 @@ export class TypedQuery<
     newQuery.selectedColumns = Object.entries(aggregations)
       .map(([alias, expr]) => `${expr} as ${alias}`);
     return newQuery;
+  }
+
+  /**
+   * Add ROW_NUMBER() window function
+   */
+  rowNumber(partitionBy?: string[], orderBy?: [string, "ASC" | "DESC"][]): this {
+    const partition = partitionBy?.length ? `PARTITION BY ${partitionBy.join(", ")}` : "";
+    const order = orderBy?.length ? `ORDER BY ${orderBy.map(([col, dir]) => `${col} ${dir}`).join(", ")}` : "";
+    this.windowFunctions.push(`ROW_NUMBER() OVER (${partition} ${order})`);
+    return this;
+  }
+
+  /**
+   * Add RANK() window function
+   */
+  rank(partitionBy?: string[], orderBy?: [string, "ASC" | "DESC"][]): this {
+    const partition = partitionBy?.length ? `PARTITION BY ${partitionBy.join(", ")}` : "";
+    const order = orderBy?.length ? `ORDER BY ${orderBy.map(([col, dir]) => `${col} ${dir}`).join(", ")}` : "";
+    this.windowFunctions.push(`RANK() OVER (${partition} ${order})`);
+    return this;
+  }
+
+  /**
+   * Add DENSE_RANK() window function
+   */
+  denseRank(partitionBy?: string[], orderBy?: [string, "ASC" | "DESC"][]): this {
+    const partition = partitionBy?.length ? `PARTITION BY ${partitionBy.join(", ")}` : "";
+    const order = orderBy?.length ? `ORDER BY ${orderBy.map(([col, dir]) => `${col} ${dir}`).join(", ")}` : "";
+    this.windowFunctions.push(`DENSE_RANK() OVER (${partition} ${order})`);
+    return this;
+  }
+
+  /**
+   * Add LAG() window function
+   */
+  lag(column: string, offset: number = 1, defaultValue?: any, partitionBy?: string[]): this {
+    const partition = partitionBy?.length ? `PARTITION BY ${partitionBy.join(", ")}` : "";
+    const def = defaultValue !== undefined ? `, ${defaultValue}` : "";
+    this.windowFunctions.push(`LAG(${column}, ${offset}${def}) OVER (${partition})`);
+    return this;
+  }
+
+  /**
+   * Add LEAD() window function
+   */
+  lead(column: string, offset: number = 1, defaultValue?: any, partitionBy?: string[]): this {
+    const partition = partitionBy?.length ? `PARTITION BY ${partitionBy.join(", ")}` : "";
+    const def = defaultValue !== undefined ? `, ${defaultValue}` : "";
+    this.windowFunctions.push(`LEAD(${column}, ${offset}${def}) OVER (${partition})`);
+    return this;
+  }
+
+  /**
+   * Add any window function with custom OVER clause
+   */
+  window(function_: string, over: string): this {
+    this.windowFunctions.push(`${function_} OVER (${over})`);
+    return this;
   }
 
   /**
@@ -757,6 +821,127 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
    */
   async close(): Promise<void> {
     await this.pool.end();
+  }
+
+  /**
+   * Execute multiple operations in a single batch
+   */
+  async batch<T extends keyof Schema & string>(operations: {
+    insert?: Array<{
+      table: T;
+      data: Partial<Schema[T]> | Partial<Schema[T]>[];
+    }>;
+    update?: Array<{
+      table: T;
+      data: Partial<Schema[T]>;
+      where: Partial<Schema[T]>;
+    }>;
+    delete?: Array<{
+      table: T;
+      where: Partial<Schema[T]>;
+    }>;
+  }): Promise<{
+    inserted: Record<T, Schema[T][]>;
+    updated: Record<T, Schema[T][]>;
+    deleted: Record<T, Schema[T][]>;
+  }> {
+    return this.transaction(async (tx) => {
+      const result = {
+        inserted: {} as Record<T, Schema[T][]>,
+        updated: {} as Record<T, Schema[T][]>,
+        deleted: {} as Record<T, Schema[T][]>
+      };
+
+      // Process inserts
+      if (operations.insert) {
+        for (const op of operations.insert) {
+          const rows = await tx.insert(op.table, op.data);
+          if (!result.inserted[op.table]) {
+            result.inserted[op.table] = [];
+          }
+          result.inserted[op.table].push(...rows);
+        }
+      }
+
+      // Process updates
+      if (operations.update) {
+        for (const op of operations.update) {
+          const rows = await tx.update(op.table, op.data, op.where);
+          if (!result.updated[op.table]) {
+            result.updated[op.table] = [];
+          }
+          result.updated[op.table].push(...rows);
+        }
+      }
+
+      // Process deletes
+      if (operations.delete) {
+        for (const op of operations.delete) {
+          const rows = await tx.delete(op.table, op.where);
+          if (!result.deleted[op.table]) {
+            result.deleted[op.table] = [];
+          }
+          result.deleted[op.table].push(...rows);
+        }
+      }
+
+      return result;
+    });
+  }
+
+  /**
+   * Insert multiple rows in chunks to avoid parameter limits
+   */
+  async batchInsert<T extends keyof Schema & string>(
+    table: T,
+    data: Partial<Schema[T]>[],
+    chunkSize: number = 1000
+  ): Promise<Schema[T][]> {
+    if (data.length === 0) return [];
+
+    // Insert all data at once for better efficiency
+    return this.insert(table, data);
+  }
+
+  /**
+   * Update multiple rows with different values in a single query
+   */
+  async batchUpdate<T extends keyof Schema & string>(
+    table: T,
+    updates: Array<{
+      set: Partial<Schema[T]>;
+      where: Partial<Schema[T]>;
+    }>
+  ): Promise<Schema[T][]> {
+    if (updates.length === 0) return [];
+
+    // Execute all updates in a single transaction
+    return this.transaction(async (tx) => {
+      const promises = updates.map(update =>
+        tx.update(table, update.set, update.where)
+      );
+      const results = await Promise.all(promises);
+      return results.flat();
+    });
+  }
+
+  /**
+   * Delete multiple rows with different conditions in a single transaction
+   */
+  async batchDelete<T extends keyof Schema & string>(
+    table: T,
+    conditions: Partial<Schema[T]>[]
+  ): Promise<Schema[T][]> {
+    if (conditions.length === 0) return [];
+
+    // Execute all deletes in a single transaction
+    return this.transaction(async (tx) => {
+      const promises = conditions.map(where =>
+        tx.delete(table, where)
+      );
+      const results = await Promise.all(promises);
+      return results.flat();
+    });
   }
 }
 

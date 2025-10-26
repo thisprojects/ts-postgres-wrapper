@@ -289,6 +289,124 @@ describe("TypedPg CRUD Operations", () => {
     });
   });
 
+  describe("Batch Operations", () => {
+    it("should handle batch with multiple operations", async () => {
+      const mockUsers = [
+        createMockUser({ id: 1, name: "User 1" }),
+        createMockUser({ id: 2, name: "User 2" })
+      ];
+      mockPool.setMockResults(mockUsers);
+
+      const result = await db.batch({
+        insert: [{
+          table: "users",
+          data: { name: "New User", email: "new@example.com" }
+        }],
+        update: [{
+          table: "users",
+          data: { name: "Updated User" },
+          where: { id: 1 }
+        }],
+        delete: [{
+          table: "users",
+          where: { id: 2 }
+        }]
+      });
+
+      const queries = mockPool.getQueryLog().map(q => q.text);
+      expect(queries).toContain("BEGIN");
+      expect(mockPool.getQueriesMatching("INSERT INTO users")).toHaveLength(1);
+      expect(mockPool.getQueriesMatching("UPDATE users SET")).toHaveLength(1);
+      expect(mockPool.getQueriesMatching("DELETE FROM users WHERE")).toHaveLength(1);
+      expect(queries).toContain("COMMIT");
+
+      expect(result.inserted.users).toBeDefined();
+      expect(result.updated.users).toBeDefined();
+      expect(result.deleted.users).toBeDefined();
+    });
+
+    it("should handle batch insert with chunking", async () => {
+      const mockResult = Array(5).fill(null).map((_, i) =>
+        createMockUser({ id: i + 1, name: `User ${i + 1}` })
+      );
+      mockPool.setMockResults(mockResult);
+
+      const data = Array(5).fill(null).map((_, i) => ({
+        name: `User ${i + 1}`,
+        email: `user${i + 1}@example.com`
+      }));
+
+      const result = await db.batchInsert("users", data, 2);
+
+      expect(mockPool.getQueryLog()).toHaveLength(1); // Single INSERT with multiple VALUES
+      expect(result).toHaveLength(5);
+    });
+
+    it("should handle batch update with multiple conditions", async () => {
+      // Set up mock responses for each query
+      const mockResponses = [
+        [], // BEGIN
+        [createMockUser({ id: 1, name: "Updated 1" })], // First UPDATE
+        [createMockUser({ id: 2, name: "Updated 2" })], // Second UPDATE
+        []  // COMMIT
+      ];
+
+      let responseIndex = 0;
+      const queryLog: Array<{ text: string; values: any[] }> = [];
+      mockPool.query = jest.fn().mockImplementation((text, values = []) => {
+        queryLog.push({ text, values });
+        const result = { rows: mockResponses[responseIndex] };
+        responseIndex++;
+        return Promise.resolve(result);
+      });
+      mockPool.getQueryLog = () => queryLog;
+
+      const result = await db.batchUpdate("users", [
+        { set: { name: "Updated 1" }, where: { id: 1 } },
+        { set: { name: "Updated 2" }, where: { id: 2 } }
+      ]);
+
+      const queries = mockPool.getQueryLog().map(q => q.text);
+      expect(queries).toContain("BEGIN");
+      expect(queries).toContain("COMMIT");
+      expect(queries.filter(q => q.includes("UPDATE users SET")).length).toBe(2);
+      expect(result).toHaveLength(2);
+      expect(result.map(r => r.name).sort()).toEqual(["Updated 1", "Updated 2"]);
+    });
+
+    it("should handle batch delete with multiple conditions", async () => {
+      // Mock results for each delete
+      mockPool.setMockResults([createMockUser({ id: 1 })]);
+      mockPool.setMockResults([createMockUser({ id: 2 })]);
+
+      const result = await db.batchDelete("users", [
+        { id: 1 },
+        { id: 2 }
+      ]);
+
+      expect(mockPool).toHaveExecutedQueries(4); // BEGIN + 2 deletes + COMMIT
+      expect(result).toHaveLength(2);
+    });
+
+    it("should handle empty batch operations", async () => {
+      const result = await db.batch({});
+      expect(result.inserted).toEqual({});
+      expect(result.updated).toEqual({});
+      expect(result.deleted).toEqual({});
+    });
+
+    it("should handle empty arrays in batch operations", async () => {
+      const insertResult = await db.batchInsert("users", []);
+      expect(insertResult).toEqual([]);
+
+      const updateResult = await db.batchUpdate("users", []);
+      expect(updateResult).toEqual([]);
+
+      const deleteResult = await db.batchDelete("users", []);
+      expect(deleteResult).toEqual([]);
+    });
+  });
+
   describe("Raw SQL queries", () => {
     it("should execute raw query with parameters", async () => {
       const mockData = [{ user_count: 42, avg_age: 30.5 }];

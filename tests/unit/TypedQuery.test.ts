@@ -1384,6 +1384,125 @@ describe("TypedQuery", () => {
     });
   });
 
+  describe("Window Functions", () => {
+    it("should handle basic ROW_NUMBER()", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query
+        .select("name", "department")
+        .rowNumber(["department"], [["salary", "DESC"]])
+        .execute();
+
+      const sql = mockPool.getLastQuery().text.replace(/\s+/g, " ").trim();
+      expect(sql).toContain("ROW_NUMBER() OVER (PARTITION BY department ORDER BY salary DESC) as window_1");
+    });
+
+    it("should handle RANK()", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query
+        .select("name", "department")
+        .rank(["department"], [["salary", "DESC"]])
+        .execute();
+
+      const sql = mockPool.getLastQuery().text.replace(/\s+/g, " ").trim();
+      expect(sql).toContain("RANK() OVER (PARTITION BY department ORDER BY salary DESC) as window_1");
+    });
+
+    it("should handle DENSE_RANK()", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query
+        .select("name", "department")
+        .denseRank(["department"], [["salary", "DESC"]])
+        .execute();
+
+      const sql = mockPool.getLastQuery().text.replace(/\s+/g, " ").trim();
+      expect(sql).toContain("DENSE_RANK() OVER (PARTITION BY department ORDER BY salary DESC) as window_1");
+    });
+
+    it("should handle LAG()", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query
+        .select("name", "department", "salary")
+        .lag("salary", 1, 0, ["department"])
+        .execute();
+
+      const sql = mockPool.getLastQuery().text.replace(/\s+/g, " ").trim();
+      expect(sql).toContain("LAG(salary, 1, 0) OVER (PARTITION BY department) as window_1");
+    });
+
+    it("should handle LEAD()", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query
+        .select("name", "department", "salary")
+        .lead("salary", 1, 0, ["department"])
+        .execute();
+
+      const sql = mockPool.getLastQuery().text.replace(/\s+/g, " ").trim();
+      expect(sql).toContain("LEAD(salary, 1, 0) OVER (PARTITION BY department) as window_1");
+    });
+
+    it("should handle multiple window functions", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query
+        .select("name", "department", "salary")
+        .rowNumber(["department"], [["salary", "DESC"]])
+        .lag("salary", 1, 0, ["department"])
+        .execute();
+
+      const sql = mockPool.getLastQuery().text.replace(/\s+/g, " ").trim();
+      expect(sql).toContain("ROW_NUMBER() OVER (PARTITION BY department ORDER BY salary DESC) as window_1");
+      expect(sql).toContain("LAG(salary, 1, 0) OVER (PARTITION BY department) as window_2");
+    });
+
+    it("should handle custom window function", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query
+        .select("name", "department")
+        .window(
+          "FIRST_VALUE(salary)",
+          "PARTITION BY department ORDER BY salary DESC"
+        )
+        .execute();
+
+      const sql = mockPool.getLastQuery().text.replace(/\s+/g, " ").trim();
+      expect(sql).toContain("FIRST_VALUE(salary) OVER (PARTITION BY department ORDER BY salary DESC) as window_1");
+    });
+  });
+
   describe("Complex query combinations", () => {
     it("should handle complex query with all clauses", async () => {
       mockPool.setMockResults([]);
