@@ -21,6 +21,13 @@ interface TestSchema {
     tags: string[];
     created_at: Date;
   };
+  comments: {
+    id: number;
+    post_id: number;
+    user_id: number;
+    content: string;
+    created_at: Date;
+  };
   products: {
     id: number;
     name: string;
@@ -802,6 +809,414 @@ runner.test("Edge Cases - Multiple select calls", async () => {
   assert(
     queryLog[0].text === "SELECT email, age FROM users",
     "Should use most recent select"
+  );
+});
+
+// ==========================================
+// JOIN Tests
+// ==========================================
+
+runner.test("TypedQuery - INNER JOIN basic functionality", async () => {
+  mockPool.clearQueryLog();
+  mockPool.setMockResults([
+    { id: 1, name: "John", title: "Hello World", content: "My first post" },
+  ]);
+
+  await db
+    .table("users")
+    .innerJoin("posts", "users.id", "posts.user_id")
+    .select("users.id", "users.name", "posts.title", "posts.content")
+    .execute();
+
+  const queryLog = mockPool.getQueryLog();
+  assert(
+    queryLog[0].text.includes("INNER JOIN posts ON users.id = posts.user_id"),
+    "Should generate INNER JOIN clause"
+  );
+  assert(
+    queryLog[0].text.includes(
+      "SELECT users.id, users.name, posts.title, posts.content"
+    ),
+    "Should select qualified columns"
+  );
+});
+
+runner.test("TypedQuery - LEFT JOIN functionality", async () => {
+  mockPool.clearQueryLog();
+  mockPool.setMockResults([]);
+
+  await db
+    .table("users")
+    .leftJoin("posts", "users.id", "posts.user_id")
+    .where("users.active", "=", true)
+    .execute();
+
+  const queryLog = mockPool.getQueryLog();
+  assert(
+    queryLog[0].text.includes("LEFT JOIN posts ON users.id = posts.user_id"),
+    "Should generate LEFT JOIN clause"
+  );
+  assert(
+    queryLog[0].text.includes("WHERE users.active = $1"),
+    "Should qualify column names in WHERE with JOINs"
+  );
+  assertDeepEqual(queryLog[0].values, [true], "Should pass correct parameters");
+});
+
+runner.test("TypedQuery - RIGHT JOIN functionality", async () => {
+  mockPool.clearQueryLog();
+  mockPool.setMockResults([]);
+
+  await db
+    .table("posts")
+    .rightJoin("users", "posts.user_id", "users.id")
+    .where("users.active", "=", true)
+    .execute();
+
+  const queryLog = mockPool.getQueryLog();
+  assert(
+    queryLog[0].text.includes("RIGHT JOIN users ON posts.user_id = users.id"),
+    "Should generate RIGHT JOIN clause"
+  );
+});
+
+runner.test("TypedQuery - FULL OUTER JOIN functionality", async () => {
+  mockPool.clearQueryLog();
+  mockPool.setMockResults([]);
+
+  await db
+    .table("users")
+    .fullJoin("posts", "users.id", "posts.user_id")
+    .execute();
+
+  const queryLog = mockPool.getQueryLog();
+  assert(
+    queryLog[0].text.includes("FULL JOIN posts ON users.id = posts.user_id"),
+    "Should generate FULL OUTER JOIN clause"
+  );
+});
+
+runner.test("TypedQuery - Multiple JOINs", async () => {
+  mockPool.clearQueryLog();
+  mockPool.setMockResults([]);
+
+  await db
+    .table("users")
+    .innerJoin("posts", "users.id", "posts.user_id")
+    .leftJoin("comments", "posts.id", "comments.post_id")
+    .select("users.name", "posts.title", "comments.content")
+    .execute();
+
+  const queryLog = mockPool.getQueryLog();
+  assert(
+    queryLog[0].text.includes("INNER JOIN posts ON users.id = posts.user_id"),
+    "Should include first JOIN"
+  );
+  assert(
+    queryLog[0].text.includes(
+      "LEFT JOIN comments ON posts.id = comments.post_id"
+    ),
+    "Should include second JOIN"
+  );
+  assert(
+    queryLog[0].text.includes(
+      "SELECT users.name, posts.title, comments.content"
+    ),
+    "Should select from all joined tables"
+  );
+});
+
+runner.test("TypedQuery - JOIN with table aliases", async () => {
+  mockPool.clearQueryLog();
+  mockPool.setMockResults([]);
+
+  await db
+    .table("users", "u")
+    .innerJoin("posts", "u.id", "posts.user_id")
+    .select("u.name", "posts.title")
+    .execute();
+
+  const queryLog = mockPool.getQueryLog();
+  assert(
+    queryLog[0].text.includes("FROM users AS u"),
+    "Should use table alias in FROM clause"
+  );
+  assert(
+    queryLog[0].text.includes("INNER JOIN posts ON u.id = posts.user_id"),
+    "Should use alias in JOIN condition"
+  );
+  assert(
+    queryLog[0].text.includes("SELECT u.name, posts.title"),
+    "Should use alias in SELECT"
+  );
+});
+
+runner.test("TypedQuery - JOIN with WHERE and ORDER BY", async () => {
+  mockPool.clearQueryLog();
+  mockPool.setMockResults([]);
+
+  await db
+    .table("users")
+    .innerJoin("posts", "users.id", "posts.user_id")
+    .where("users.active", "=", true)
+    .where("posts.published", "=", true)
+    .orderBy("users.name", "ASC")
+    .orderBy("posts.created_at", "DESC")
+    .limit(10)
+    .execute();
+
+  const queryLog = mockPool.getQueryLog();
+  assert(
+    queryLog[0].text.includes(
+      "WHERE users.active = $1 AND posts.published = $2"
+    ),
+    "Should qualify WHERE columns with JOINs"
+  );
+  assert(
+    queryLog[0].text.includes("ORDER BY users.name ASC, posts.created_at DESC"),
+    "Should qualify ORDER BY columns with JOINs"
+  );
+  assert(queryLog[0].text.includes("LIMIT 10"), "Should include LIMIT clause");
+  assertDeepEqual(
+    queryLog[0].values,
+    [true, true],
+    "Should pass correct parameters"
+  );
+});
+
+runner.test("TypedQuery - JOIN with OR WHERE", async () => {
+  mockPool.clearQueryLog();
+  mockPool.setMockResults([]);
+
+  await db
+    .table("users")
+    .innerJoin("posts", "users.id", "posts.user_id")
+    .where("users.active", "=", true)
+    .orWhere("posts.published", "=", false)
+    .execute();
+
+  const queryLog = mockPool.getQueryLog();
+  assert(
+    queryLog[0].text.includes(
+      "WHERE users.active = $1 OR posts.published = $2"
+    ),
+    "Should generate OR condition with qualified columns"
+  );
+  assertDeepEqual(
+    queryLog[0].values,
+    [true, false],
+    "Should pass correct parameters"
+  );
+});
+
+runner.test("TypedQuery - JOIN with IN operator", async () => {
+  mockPool.clearQueryLog();
+  mockPool.setMockResults([]);
+
+  await db
+    .table("users")
+    .innerJoin("posts", "users.id", "posts.user_id")
+    .where("users.id", "IN", [1, 2, 3])
+    .where("posts.tags", "IN", ["tech", "programming"])
+    .execute();
+
+  const queryLog = mockPool.getQueryLog();
+  assert(
+    queryLog[0].text.includes(
+      "WHERE users.id IN ($1, $2, $3) AND posts.tags IN ($4, $5)"
+    ),
+    "Should generate IN clauses with correct parameters"
+  );
+  assertDeepEqual(
+    queryLog[0].values,
+    [1, 2, 3, "tech", "programming"],
+    "Should pass all IN parameters"
+  );
+});
+
+runner.test("TypedQuery - JOIN with COUNT", async () => {
+  mockPool.clearQueryLog();
+  mockPool.setMockResults([{ count: "42" }]);
+
+  const count = await db
+    .table("users")
+    .innerJoin("posts", "users.id", "posts.user_id")
+    .where("posts.published", "=", true)
+    .count();
+
+  const queryLog = mockPool.getQueryLog();
+  assert(
+    queryLog[0].text.includes(
+      "SELECT COUNT(*) as count FROM users INNER JOIN posts ON users.id = posts.user_id"
+    ),
+    "Should generate COUNT with JOIN"
+  );
+  assert(count === 42, "Should return parsed count");
+});
+
+runner.test("TypedQuery - JOIN with first() method", async () => {
+  mockPool.clearQueryLog();
+  mockPool.setMockResults([{ name: "John", title: "Hello World" }]);
+
+  const result = await db
+    .table("users")
+    .innerJoin("posts", "users.id", "posts.user_id")
+    .where("users.active", "=", true)
+    .first();
+
+  const queryLog = mockPool.getQueryLog();
+  assert(
+    queryLog[0].text.includes("LIMIT 1"),
+    "Should add LIMIT 1 for first() method"
+  );
+  assert(result && result.name === "John", "Should return first result");
+});
+
+runner.test("TypedQuery - toSQL() method with JOINs", async () => {
+  const query = db
+    .table("users")
+    .innerJoin("posts", "users.id", "posts.user_id")
+    .where("users.active", "=", true)
+    .where("posts.published", "=", true)
+    .select("users.name", "posts.title")
+    .orderBy("posts.created_at", "DESC")
+    .limit(5);
+
+  const { query: sql, params } = query.toSQL();
+
+  assert(
+    sql.includes(
+      "SELECT users.name, posts.title FROM users INNER JOIN posts ON users.id = posts.user_id"
+    ),
+    "toSQL should return correct SQL structure"
+  );
+  assert(
+    sql.includes("WHERE users.active = $1 AND posts.published = $2"),
+    "toSQL should include WHERE clause"
+  );
+  assert(
+    sql.includes("ORDER BY posts.created_at DESC"),
+    "toSQL should include ORDER BY clause"
+  );
+  assert(sql.includes("LIMIT 5"), "toSQL should include LIMIT clause");
+  assertDeepEqual(
+    params,
+    [true, true],
+    "toSQL should return correct parameters"
+  );
+});
+
+runner.test("TypedQuery - Complex multi-table JOIN scenario", async () => {
+  mockPool.clearQueryLog();
+  mockPool.setMockResults([]);
+
+  await db
+    .table("users", "u")
+    .innerJoin("posts", "u.id", "posts.user_id")
+    .leftJoin("comments", "posts.id", "comments.post_id")
+    .where("u.active", "=", true)
+    .where("posts.published", "=", true)
+    .where("posts.created_at", ">", new Date("2024-01-01"))
+    .orderBy("posts.created_at", "DESC")
+    .orderBy("comments.created_at", "ASC")
+    .limit(20)
+    .offset(10)
+    .execute();
+
+  const queryLog = mockPool.getQueryLog();
+
+  // Check all expected JOINs
+  assert(
+    queryLog[0].text.includes("FROM users AS u"),
+    "Should use table alias"
+  );
+  assert(
+    queryLog[0].text.includes("INNER JOIN posts ON u.id = posts.user_id"),
+    "Should include INNER JOIN"
+  );
+  assert(
+    queryLog[0].text.includes(
+      "LEFT JOIN comments ON posts.id = comments.post_id"
+    ),
+    "Should include LEFT JOIN"
+  );
+
+  // Check WHERE conditions
+  assert(
+    queryLog[0].text.includes(
+      "WHERE u.active = $1 AND posts.published = $2 AND posts.created_at > $3"
+    ),
+    "Should include all WHERE conditions with qualified columns"
+  );
+
+  // Check ORDER BY
+  assert(
+    queryLog[0].text.includes(
+      "ORDER BY posts.created_at DESC, comments.created_at ASC"
+    ),
+    "Should include multiple ORDER BY clauses"
+  );
+
+  // Check LIMIT and OFFSET
+  assert(queryLog[0].text.includes("LIMIT 20"), "Should include LIMIT");
+  assert(queryLog[0].text.includes("OFFSET 10"), "Should include OFFSET");
+
+  // Check parameter count
+  assert(
+    queryLog[0].values.length === 3,
+    "Should have correct number of parameters"
+  );
+});
+
+runner.test(
+  "TypedQuery - Backward compatibility with non-JOIN queries",
+  async () => {
+    mockPool.clearQueryLog();
+    mockPool.setMockResults([]);
+
+    // Test that queries without JOINs still work exactly as before
+    const query = new TypedQuery<"users", TestSchema["users"]>(
+      mockPool as any,
+      "users"
+    );
+    await query
+      .where("id", "=", 123)
+      .where("active", "=", true)
+      .orderBy("name", "ASC")
+      .select("id", "name", "email")
+      .execute();
+
+    const queryLog = mockPool.getQueryLog();
+    assert(
+      queryLog[0].text ===
+        "SELECT id, name, email FROM users WHERE id = $1 AND active = $2 ORDER BY name ASC",
+      "Should generate unqualified columns for non-JOIN queries (backward compatibility)"
+    );
+    assertDeepEqual(
+      queryLog[0].values,
+      [123, true],
+      "Should pass correct parameters"
+    );
+  }
+);
+
+runner.test("TypedQuery - Already qualified column names", async () => {
+  mockPool.clearQueryLog();
+  mockPool.setMockResults([]);
+
+  await db
+    .table("users")
+    .innerJoin("posts", "users.id", "posts.user_id")
+    .where("users.active", "=", true) // Already qualified
+    .where("posts.published", "=", true) // Already qualified
+    .execute();
+
+  const queryLog = mockPool.getQueryLog();
+  assert(
+    queryLog[0].text.includes(
+      "WHERE users.active = $1 AND posts.published = $2"
+    ),
+    "Should pass through already qualified column names unchanged"
   );
 });
 

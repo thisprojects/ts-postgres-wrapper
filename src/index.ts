@@ -11,14 +11,27 @@ type ColumnNames<T> = keyof T & string;
 type SelectColumns<T, K extends keyof T & string> = Pick<T, K>;
 
 /**
+ * Join configuration interface
+ */
+interface JoinConfig {
+  type: "INNER" | "LEFT" | "RIGHT" | "FULL";
+  table: string;
+  leftColumn: string;
+  rightColumn: string;
+  alias?: string;
+}
+
+/**
  * Type-safe query builder for a specific table
  */
 export class TypedQuery<
   TableName extends string = string,
-  Row extends Record<string, any> = Record<string, any>
+  Row extends Record<string, any> = Record<string, any>,
+  Schema extends Record<string, any> = Record<string, any>
 > {
   private pool: Pool;
   private tableName: TableName;
+  private tableAlias?: string;
   private selectedColumns: string[] = [];
   private whereClause: string = "";
   private whereParams: any[] = [];
@@ -26,39 +39,152 @@ export class TypedQuery<
   private limitClause: string = "";
   private offsetClause: string = "";
   private paramCounter: number = 1;
+  private joins: JoinConfig[] = [];
+  private schema: Schema;
+  private joinedTables: Set<string> = new Set();
 
-  constructor(pool: Pool, tableName: TableName) {
+  constructor(
+    pool: Pool,
+    tableName: TableName,
+    schema?: Schema,
+    tableAlias?: string
+  ) {
     this.pool = pool;
     this.tableName = tableName;
+    this.tableAlias = tableAlias;
+    this.schema = schema || ({} as Schema);
+    this.joinedTables.add(String(tableName));
   }
 
   /**
-   * Select specific columns (type-safe!)
+   * Clone the current query with all its state
    */
-  select<K extends keyof Row & string>(
-    ...columns: K[]
-  ): TypedQuery<TableName, SelectColumns<Row, K>> {
-    const newQuery = new TypedQuery<TableName, SelectColumns<Row, K>>(
+  private clone<NewRow extends Record<string, any> = Row>(): TypedQuery<
+    TableName,
+    NewRow,
+    Schema
+  > {
+    const newQuery = new TypedQuery<TableName, NewRow, Schema>(
       this.pool,
-      this.tableName
+      this.tableName,
+      this.schema,
+      this.tableAlias
     );
-    newQuery.selectedColumns = columns;
+    newQuery.selectedColumns = [...this.selectedColumns];
     newQuery.whereClause = this.whereClause;
     newQuery.whereParams = [...this.whereParams];
     newQuery.orderByClause = this.orderByClause;
     newQuery.limitClause = this.limitClause;
     newQuery.offsetClause = this.offsetClause;
     newQuery.paramCounter = this.paramCounter;
+    newQuery.joins = [...this.joins];
+    newQuery.joinedTables = new Set(this.joinedTables);
     return newQuery;
   }
 
   /**
-   * Add WHERE clause
+   * Select specific columns (type-safe for known schemas, string-based for flexibility)
+   */
+  select<K extends keyof Row & string>(
+    ...columns: K[]
+  ): TypedQuery<TableName, SelectColumns<Row, K>, Schema>;
+  select(...columns: string[]): TypedQuery<TableName, any, Schema>;
+  select(...columns: any[]): TypedQuery<TableName, any, Schema> {
+    const newQuery = this.clone<any>();
+    newQuery.selectedColumns = columns;
+    return newQuery;
+  }
+
+  /**
+   * INNER JOIN with another table
+   */
+  innerJoin(
+    joinedTable: string,
+    leftColumn: string,
+    rightColumn: string,
+    alias?: string
+  ): TypedQuery<TableName, any, Schema> {
+    return this.addJoin("INNER", joinedTable, leftColumn, rightColumn, alias);
+  }
+
+  /**
+   * LEFT JOIN with another table
+   */
+  leftJoin(
+    joinedTable: string,
+    leftColumn: string,
+    rightColumn: string,
+    alias?: string
+  ): TypedQuery<TableName, any, Schema> {
+    return this.addJoin("LEFT", joinedTable, leftColumn, rightColumn, alias);
+  }
+
+  /**
+   * RIGHT JOIN with another table
+   */
+  rightJoin(
+    joinedTable: string,
+    leftColumn: string,
+    rightColumn: string,
+    alias?: string
+  ): TypedQuery<TableName, any, Schema> {
+    return this.addJoin("RIGHT", joinedTable, leftColumn, rightColumn, alias);
+  }
+
+  /**
+   * FULL OUTER JOIN with another table
+   */
+  fullJoin(
+    joinedTable: string,
+    leftColumn: string,
+    rightColumn: string,
+    alias?: string
+  ): TypedQuery<TableName, any, Schema> {
+    return this.addJoin("FULL", joinedTable, leftColumn, rightColumn, alias);
+  }
+
+  /**
+   * Internal method to add joins
+   */
+  private addJoin(
+    type: "INNER" | "LEFT" | "RIGHT" | "FULL",
+    joinedTable: string,
+    leftColumn: string,
+    rightColumn: string,
+    alias?: string
+  ): TypedQuery<TableName, any, Schema> {
+    const newQuery = this.clone<any>();
+
+    newQuery.joins.push({
+      type,
+      table: joinedTable,
+      leftColumn,
+      rightColumn,
+      alias,
+    });
+
+    newQuery.joinedTables.add(alias || joinedTable);
+
+    return newQuery;
+  }
+
+  /**
+   * Add WHERE clause (supports both typed columns and string-based columns)
    */
   where<K extends ColumnNames<Row>>(
     column: K,
     operator: "=" | "!=" | ">" | "<" | ">=" | "<=" | "LIKE" | "ILIKE" | "IN",
     value: Row[K] | Row[K][]
+  ): this;
+  where(
+    column: string,
+    operator: "=" | "!=" | ">" | "<" | ">=" | "<=" | "LIKE" | "ILIKE" | "IN",
+    value: any
+  ): this;
+  where(
+    column: any,
+    operator: "=" | "!=" | ">" | "<" | ">=" | "<=" | "LIKE" | "ILIKE" | "IN",
+    value: any
   ): this {
     if (this.whereClause) {
       this.whereClause += " AND ";
@@ -66,14 +192,17 @@ export class TypedQuery<
       this.whereClause = " WHERE ";
     }
 
+    // Auto-qualify column if not already qualified and no ambiguity
+    const qualifiedColumn = this.qualifyColumnName(String(column));
+
     if (operator === "IN" && Array.isArray(value)) {
       const placeholders = value
         .map(() => `$${this.paramCounter++}`)
         .join(", ");
-      this.whereClause += `${String(column)} IN (${placeholders})`;
+      this.whereClause += `${qualifiedColumn} IN (${placeholders})`;
       this.whereParams.push(...value);
     } else {
-      this.whereClause += `${String(column)} ${operator} $${this.paramCounter}`;
+      this.whereClause += `${qualifiedColumn} ${operator} $${this.paramCounter}`;
       this.whereParams.push(value);
       this.paramCounter++;
     }
@@ -81,35 +210,60 @@ export class TypedQuery<
   }
 
   /**
-   * Add OR WHERE clause
+   * Add OR WHERE clause (supports both typed columns and string-based columns)
    */
   orWhere<K extends ColumnNames<Row>>(
     column: K,
     operator: "=" | "!=" | ">" | "<" | ">=" | "<=" | "LIKE" | "ILIKE",
     value: Row[K]
+  ): this;
+  orWhere(
+    column: string,
+    operator: "=" | "!=" | ">" | "<" | ">=" | "<=" | "LIKE" | "ILIKE" | "IN",
+    value: any
+  ): this;
+  orWhere(
+    column: any,
+    operator: "=" | "!=" | ">" | "<" | ">=" | "<=" | "LIKE" | "ILIKE" | "IN",
+    value: any
   ): this {
     if (this.whereClause) {
       this.whereClause += " OR ";
     } else {
       this.whereClause = " WHERE ";
     }
-    this.whereClause += `${String(column)} ${operator} $${this.paramCounter}`;
-    this.whereParams.push(value);
-    this.paramCounter++;
+
+    const qualifiedColumn = this.qualifyColumnName(String(column));
+
+    if (operator === "IN" && Array.isArray(value)) {
+      const placeholders = value
+        .map(() => `$${this.paramCounter++}`)
+        .join(", ");
+      this.whereClause += `${qualifiedColumn} IN (${placeholders})`;
+      this.whereParams.push(...value);
+    } else {
+      this.whereClause += `${qualifiedColumn} ${operator} $${this.paramCounter}`;
+      this.whereParams.push(value);
+      this.paramCounter++;
+    }
     return this;
   }
 
   /**
-   * Add ORDER BY clause
+   * Add ORDER BY clause (supports both typed columns and string-based columns)
    */
   orderBy<K extends ColumnNames<Row>>(
     column: K,
-    direction: "ASC" | "DESC" = "ASC"
-  ): this {
+    direction?: "ASC" | "DESC"
+  ): this;
+  orderBy(column: string, direction?: "ASC" | "DESC"): this;
+  orderBy(column: any, direction: "ASC" | "DESC" = "ASC"): this {
+    const qualifiedColumn = this.qualifyColumnName(String(column));
+
     if (this.orderByClause) {
-      this.orderByClause += `, ${String(column)} ${direction}`;
+      this.orderByClause += `, ${qualifiedColumn} ${direction}`;
     } else {
-      this.orderByClause = ` ORDER BY ${String(column)} ${direction}`;
+      this.orderByClause = ` ORDER BY ${qualifiedColumn} ${direction}`;
     }
     return this;
   }
@@ -131,6 +285,51 @@ export class TypedQuery<
   }
 
   /**
+   * Qualify column name if needed
+   */
+  private qualifyColumnName(column: string): string {
+    // If column is already qualified (contains a dot), return as-is
+    if (column.includes(".")) {
+      return column;
+    }
+
+    // Only qualify columns when we have JOINs (to avoid ambiguity)
+    // For single table queries, use unqualified names for backward compatibility
+    if (this.joins.length === 0) {
+      return column;
+    }
+
+    // For queries with JOINs, qualify with main table reference to avoid ambiguity
+    return `${this.getTableReference()}.${column}`;
+  }
+
+  /**
+   * Get the table reference (with alias if applicable)
+   */
+  private getTableReference(): string {
+    return this.tableAlias || String(this.tableName);
+  }
+
+  /**
+   * Build the FROM clause with joins
+   */
+  private buildFromClause(): string {
+    let fromClause = `FROM ${String(this.tableName)}`;
+    if (this.tableAlias) {
+      fromClause += ` AS ${this.tableAlias}`;
+    }
+
+    for (const join of this.joins) {
+      const joinTableRef = join.alias
+        ? `${join.table} AS ${join.alias}`
+        : join.table;
+      fromClause += ` ${join.type} JOIN ${joinTableRef} ON ${join.leftColumn} = ${join.rightColumn}`;
+    }
+
+    return fromClause;
+  }
+
+  /**
    * Execute the query and return typed results
    */
   async execute(): Promise<Row[]> {
@@ -138,7 +337,7 @@ export class TypedQuery<
       ? this.selectedColumns.join(", ")
       : "*";
 
-    const query = `SELECT ${columns} FROM ${String(this.tableName)}${
+    const query = `SELECT ${columns} ${this.buildFromClause()}${
       this.whereClause
     }${this.orderByClause}${this.limitClause}${this.offsetClause}`;
 
@@ -150,7 +349,7 @@ export class TypedQuery<
    * Execute and return first result or null
    */
   async first(): Promise<Row | null> {
-    const results = await this.limit(1).execute();
+    const results = await this.clone().limit(1).execute();
     return results[0] || null;
   }
 
@@ -158,7 +357,7 @@ export class TypedQuery<
    * Get count of matching rows
    */
   async count(): Promise<number> {
-    const query = `SELECT COUNT(*) as count FROM ${String(this.tableName)}${
+    const query = `SELECT COUNT(*) as count ${this.buildFromClause()}${
       this.whereClause
     }`;
     const result = await this.pool.query<{ count: string }>(
@@ -167,6 +366,21 @@ export class TypedQuery<
     );
     return parseInt(result.rows[0].count, 10);
   }
+
+  /**
+   * Get the SQL query string (for debugging)
+   */
+  toSQL(): { query: string; params: any[] } {
+    const columns = this.selectedColumns.length
+      ? this.selectedColumns.join(", ")
+      : "*";
+
+    const query = `SELECT ${columns} ${this.buildFromClause()}${
+      this.whereClause
+    }${this.orderByClause}${this.limitClause}${this.offsetClause}`;
+
+    return { query, params: this.whereParams };
+  }
 }
 
 /**
@@ -174,18 +388,26 @@ export class TypedQuery<
  */
 export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
   private pool: Pool;
+  private schema: Schema;
 
-  constructor(pool: Pool) {
+  constructor(pool: Pool, schema?: Schema) {
     this.pool = pool;
+    this.schema = schema || ({} as Schema);
   }
 
   /**
    * Start a type-safe query on a table
    */
   table<T extends keyof Schema & string>(
-    tableName: T
-  ): TypedQuery<T, Schema[T]> {
-    return new TypedQuery<T, Schema[T]>(this.pool, tableName);
+    tableName: T,
+    alias?: string
+  ): TypedQuery<T, Schema[T], Schema> {
+    return new TypedQuery<T, Schema[T], Schema>(
+      this.pool,
+      tableName,
+      this.schema,
+      alias
+    );
   }
 
   /**
@@ -344,7 +566,7 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
 
     try {
       await client.query("BEGIN");
-      const txPg = new TypedPg<Schema>(client as any);
+      const txPg = new TypedPg<Schema>(client as any, this.schema);
       const result = await callback(txPg);
       await client.query("COMMIT");
       return result;
@@ -377,7 +599,7 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
  */
 export function createTypedPg<
   Schema extends Record<string, any> = Record<string, any>
->(poolOrConfig: Pool | string | object): TypedPg<Schema> {
+>(poolOrConfig: Pool | string | object, schema?: Schema): TypedPg<Schema> {
   const pool =
     poolOrConfig instanceof Pool
       ? poolOrConfig
@@ -387,7 +609,7 @@ export function createTypedPg<
             : poolOrConfig
         );
 
-  return new TypedPg<Schema>(pool);
+  return new TypedPg<Schema>(pool, schema);
 }
 
 // Re-export Pool type for convenience
