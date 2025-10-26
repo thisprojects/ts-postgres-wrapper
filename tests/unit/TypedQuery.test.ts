@@ -332,6 +332,392 @@ describe("TypedQuery", () => {
     });
   });
 
+  describe("JOIN queries", () => {
+    describe("INNER JOIN", () => {
+      it("should handle INNER JOIN without alias", async () => {
+        mockPool.setMockResults([]);
+
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+        await query
+          .innerJoin("posts", "users.id", "posts.user_id")
+          .execute();
+
+        expect(mockPool).toHaveExecutedQuery(
+          "SELECT * FROM users INNER JOIN posts ON users.id = posts.user_id"
+        );
+      });
+
+      it("should handle INNER JOIN with alias", async () => {
+        mockPool.setMockResults([]);
+
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+        await query
+          .innerJoin("posts", "users.id", "p.user_id", "p")
+          .execute();
+
+        expect(mockPool).toHaveExecutedQuery(
+          "SELECT * FROM users INNER JOIN posts AS p ON users.id = p.user_id"
+        );
+      });
+
+      it("should qualify columns when INNER JOIN is used with WHERE", async () => {
+        mockPool.setMockResults([]);
+
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+        await query
+          .innerJoin("posts", "users.id", "posts.user_id")
+          .where("active", "=", true)
+          .execute();
+
+        expect(mockPool).toHaveExecutedQueryWithParams(
+          "SELECT * FROM users INNER JOIN posts ON users.id = posts.user_id WHERE users.active = $1",
+          [true]
+        );
+      });
+
+      it("should handle INNER JOIN with SELECT specific columns", async () => {
+        mockPool.setMockResults([]);
+
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+        await query
+          .select("users.id", "users.name", "posts.title")
+          .innerJoin("posts", "users.id", "posts.user_id")
+          .execute();
+
+        expect(mockPool).toHaveExecutedQuery(
+          "SELECT users.id, users.name, posts.title FROM users INNER JOIN posts ON users.id = posts.user_id"
+        );
+      });
+
+      it("should handle INNER JOIN with ORDER BY", async () => {
+        mockPool.setMockResults([]);
+
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+        await query
+          .innerJoin("posts", "users.id", "posts.user_id")
+          .orderBy("name", "ASC")
+          .execute();
+
+        expect(mockPool).toHaveExecutedQuery(
+          "SELECT * FROM users INNER JOIN posts ON users.id = posts.user_id ORDER BY users.name ASC"
+        );
+      });
+    });
+
+    describe("LEFT JOIN", () => {
+      it("should handle LEFT JOIN without alias", async () => {
+        mockPool.setMockResults([]);
+
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+        await query
+          .leftJoin("posts", "users.id", "posts.user_id")
+          .execute();
+
+        expect(mockPool).toHaveExecutedQuery(
+          "SELECT * FROM users LEFT JOIN posts ON users.id = posts.user_id"
+        );
+      });
+
+      it("should handle LEFT JOIN with alias", async () => {
+        mockPool.setMockResults([]);
+
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+        await query
+          .leftJoin("posts", "users.id", "p.user_id", "p")
+          .execute();
+
+        expect(mockPool).toHaveExecutedQuery(
+          "SELECT * FROM users LEFT JOIN posts AS p ON users.id = p.user_id"
+        );
+      });
+    });
+
+    describe("RIGHT JOIN", () => {
+      it("should handle RIGHT JOIN without alias", async () => {
+        mockPool.setMockResults([]);
+
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+        await query
+          .rightJoin("posts", "users.id", "posts.user_id")
+          .execute();
+
+        expect(mockPool).toHaveExecutedQuery(
+          "SELECT * FROM users RIGHT JOIN posts ON users.id = posts.user_id"
+        );
+      });
+
+      it("should handle RIGHT JOIN with alias", async () => {
+        mockPool.setMockResults([]);
+
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+        await query
+          .rightJoin("posts", "users.id", "p.user_id", "p")
+          .execute();
+
+        expect(mockPool).toHaveExecutedQuery(
+          "SELECT * FROM users RIGHT JOIN posts AS p ON users.id = p.user_id"
+        );
+      });
+    });
+
+    describe("FULL JOIN", () => {
+      it("should handle FULL JOIN without alias", async () => {
+        mockPool.setMockResults([]);
+
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+        await query
+          .fullJoin("posts", "users.id", "posts.user_id")
+          .execute();
+
+        expect(mockPool).toHaveExecutedQuery(
+          "SELECT * FROM users FULL JOIN posts ON users.id = posts.user_id"
+        );
+      });
+
+      it("should handle FULL JOIN with alias", async () => {
+        mockPool.setMockResults([]);
+
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+        await query
+          .fullJoin("posts", "users.id", "p.user_id", "p")
+          .execute();
+
+        expect(mockPool).toHaveExecutedQuery(
+          "SELECT * FROM users FULL JOIN posts AS p ON users.id = p.user_id"
+        );
+      });
+    });
+
+    describe("Multiple JOINs", () => {
+      it("should handle multiple JOINs", async () => {
+        mockPool.setMockResults([]);
+
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+        await query
+          .innerJoin("posts", "users.id", "posts.user_id")
+          .innerJoin("comments", "posts.id", "comments.post_id")
+          .execute();
+
+        expect(mockPool).toHaveExecutedQuery(
+          "SELECT * FROM users INNER JOIN posts ON users.id = posts.user_id INNER JOIN comments ON posts.id = comments.post_id"
+        );
+      });
+
+      it("should handle mixed JOIN types", async () => {
+        mockPool.setMockResults([]);
+
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+        await query
+          .leftJoin("posts", "users.id", "posts.user_id")
+          .innerJoin("comments", "posts.id", "comments.post_id")
+          .execute();
+
+        expect(mockPool).toHaveExecutedQuery(
+          "SELECT * FROM users LEFT JOIN posts ON users.id = posts.user_id INNER JOIN comments ON posts.id = comments.post_id"
+        );
+      });
+
+      it("should handle multiple JOINs with aliases", async () => {
+        mockPool.setMockResults([]);
+
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+        await query
+          .innerJoin("posts", "users.id", "p.user_id", "p")
+          .innerJoin("comments", "p.id", "c.post_id", "c")
+          .execute();
+
+        expect(mockPool).toHaveExecutedQuery(
+          "SELECT * FROM users INNER JOIN posts AS p ON users.id = p.user_id INNER JOIN comments AS c ON p.id = c.post_id"
+        );
+      });
+    });
+
+    describe("JOINs with complex queries", () => {
+      it("should handle JOIN with WHERE and ORDER BY", async () => {
+        mockPool.setMockResults([]);
+
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+        await query
+          .innerJoin("posts", "users.id", "posts.user_id")
+          .where("active", "=", true)
+          .where("published", "=", true)
+          .orderBy("name", "DESC")
+          .execute();
+
+        expect(mockPool).toHaveExecutedQueryWithParams(
+          "SELECT * FROM users INNER JOIN posts ON users.id = posts.user_id WHERE users.active = $1 AND users.published = $2 ORDER BY users.name DESC",
+          [true, true]
+        );
+      });
+
+      it("should handle JOIN with LIMIT and OFFSET", async () => {
+        mockPool.setMockResults([]);
+
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+        await query
+          .innerJoin("posts", "users.id", "posts.user_id")
+          .limit(10)
+          .offset(5)
+          .execute();
+
+        expect(mockPool).toHaveExecutedQuery(
+          "SELECT * FROM users INNER JOIN posts ON users.id = posts.user_id LIMIT 10 OFFSET 5"
+        );
+      });
+
+      it("should handle JOIN with all query clauses", async () => {
+        mockPool.setMockResults([]);
+
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+        await query
+          .select("users.id", "users.name", "posts.title")
+          .innerJoin("posts", "users.id", "posts.user_id")
+          .where("active", "=", true)
+          .orWhere("id", "IN", [1, 2, 3])
+          .orderBy("name", "ASC")
+          .limit(20)
+          .offset(10)
+          .execute();
+
+        expect(mockPool).toHaveExecutedQueryWithParams(
+          "SELECT users.id, users.name, posts.title FROM users INNER JOIN posts ON users.id = posts.user_id WHERE users.active = $1 OR users.id IN ($2, $3, $4) ORDER BY users.name ASC LIMIT 20 OFFSET 10",
+          [true, 1, 2, 3]
+        );
+      });
+
+      it("should handle JOIN with COUNT", async () => {
+        mockPool.setMockResults([{ count: "15" }]);
+
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+        const count = await query
+          .innerJoin("posts", "users.id", "posts.user_id")
+          .where("active", "=", true)
+          .count();
+
+        expect(mockPool).toHaveExecutedQueryWithParams(
+          "SELECT COUNT(*) as count FROM users INNER JOIN posts ON users.id = posts.user_id WHERE users.active = $1",
+          [true]
+        );
+        expect(count).toBe(15);
+      });
+
+      it("should handle already qualified columns with JOINs", async () => {
+        mockPool.setMockResults([]);
+
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+        await query
+          .innerJoin("posts", "users.id", "posts.user_id")
+          .where("posts.published", "=", true)
+          .execute();
+
+        expect(mockPool).toHaveExecutedQueryWithParams(
+          "SELECT * FROM users INNER JOIN posts ON users.id = posts.user_id WHERE posts.published = $1",
+          [true]
+        );
+      });
+    });
+
+    describe("JOINs with table aliases", () => {
+      it("should handle table alias for main table", async () => {
+        mockPool.setMockResults([]);
+
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users",
+          undefined,
+          "u"
+        );
+        await query
+          .innerJoin("posts", "u.id", "posts.user_id")
+          .where("active", "=", true)
+          .execute();
+
+        expect(mockPool).toHaveExecutedQueryWithParams(
+          "SELECT * FROM users AS u INNER JOIN posts ON u.id = posts.user_id WHERE u.active = $1",
+          [true]
+        );
+      });
+
+      it("should qualify columns with main table alias when present", async () => {
+        mockPool.setMockResults([]);
+
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users",
+          undefined,
+          "u"
+        );
+        await query
+          .innerJoin("posts", "u.id", "p.user_id", "p")
+          .where("name", "LIKE", "%john%")
+          .orderBy("created_at", "DESC")
+          .execute();
+
+        expect(mockPool).toHaveExecutedQueryWithParams(
+          "SELECT * FROM users AS u INNER JOIN posts AS p ON u.id = p.user_id WHERE u.name LIKE $1 ORDER BY u.created_at DESC",
+          ["%john%"]
+        );
+      });
+    });
+  });
+
   describe("Complex query combinations", () => {
     it("should handle complex query with all clauses", async () => {
       mockPool.setMockResults([]);
