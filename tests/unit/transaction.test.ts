@@ -29,6 +29,12 @@ describe("TypedPg Transaction Tests", () => {
     expect(mockPool.getQueriesMatching("COMMIT")).toHaveLength(1);
     expect(result).toHaveLength(1);
     expect(result[0]).toEqual(mockUser);
+
+    // Verify INSERT query structure
+    const insertQueries = mockPool.getQueriesMatching("INSERT INTO");
+    expect(insertQueries).toHaveLength(1);
+    expect(insertQueries[0].text).toMatch(/INSERT INTO users \(name, email, age, active\) VALUES \(\$1, \$2, \$3, \$4\) RETURNING \*/);
+    expect(insertQueries[0].values).toEqual(["John", "john@example.com", 30, true]);
   });
 
   it("should rollback transaction on error", async () => {
@@ -54,7 +60,15 @@ describe("TypedPg Transaction Tests", () => {
       return true;
     });
 
-    expect(mockClient.release).toHaveBeenCalled();
+    // Verify client was released after transaction completed
+    expect(mockClient.release).toHaveBeenCalledTimes(1);
+    expect(mockClient.release).toHaveBeenCalledWith();
+
+    // Verify order of operations
+    const beginQueries = mockPool.getQueriesMatching("BEGIN");
+    const commitQueries = mockPool.getQueriesMatching("COMMIT");
+    expect(beginQueries).toHaveLength(1);
+    expect(commitQueries).toHaveLength(1);
   });
 
   it("should release client even after error", async () => {
@@ -68,12 +82,26 @@ describe("TypedPg Transaction Tests", () => {
       throw new Error("Test error");
     })).rejects.toThrow();
 
-    expect(mockClient.release).toHaveBeenCalled();
+    expect(mockClient.release).toHaveBeenCalledTimes(1);
+    expect(mockClient.release).toHaveBeenCalledWith();
+
+    // Verify order of operations
+    const beginQueries = mockPool.getQueriesMatching("BEGIN");
+    const rollbackQueries = mockPool.getQueriesMatching("ROLLBACK");
+    expect(beginQueries).toHaveLength(1);
+    expect(rollbackQueries).toHaveLength(1);
   });
 
   it("should support nested transactions", async () => {
     const mockUser = createMockUser();
     mockPool.setMockResults([mockUser, mockUser]); // For two inserts
+
+    const mockClient = {
+      query: mockPool.query.bind(mockPool),
+      release: jest.fn(),
+      connect: jest.fn(function() { return Promise.resolve(this); })
+    };
+    mockPool.connect = jest.fn().mockResolvedValue(mockClient);
 
     await db.transaction(async (outerTx) => {
       await outerTx.insert("users", { name: "Outer", email: "outer@example.com", age: 30, active: true });
@@ -83,12 +111,26 @@ describe("TypedPg Transaction Tests", () => {
       });
     });
 
-    expect(mockPool).toHaveExecutedQueries(6); // 2x(BEGIN + INSERT + COMMIT)
+    expect(mockPool).toHaveExecutedQueries(6); // BEGIN + INSERT + BEGIN + INSERT + COMMIT + COMMIT
     expect(mockPool.getQueriesMatching("BEGIN")).toHaveLength(2);
     expect(mockPool.getQueriesMatching("COMMIT")).toHaveLength(2);
+
+    // Verify INSERT queries
+    const insertQueries = mockPool.getQueriesMatching("INSERT INTO");
+    expect(insertQueries).toHaveLength(2);
+    expect(insertQueries[0].text).toMatch(/INSERT INTO users \(name, email, age, active\) VALUES \(\$1, \$2, \$3, \$4\) RETURNING \*/);
+    expect(insertQueries[0].values).toEqual(["Outer", "outer@example.com", 30, true]);
+    expect(insertQueries[1].text).toMatch(/INSERT INTO users \(name, email, age, active\) VALUES \(\$1, \$2, \$3, \$4\) RETURNING \*/);
+    expect(insertQueries[1].values).toEqual(["Inner", "inner@example.com", 25, true]);
   });
 
   it("should rollback entire transaction chain on inner error", async () => {
+    const mockClient = {
+      query: mockPool.query.bind(mockPool),
+      release: jest.fn(),
+      connect: jest.fn(function() { return Promise.resolve(this); })
+    };
+    mockPool.connect = jest.fn().mockResolvedValue(mockClient);
     await expect(db.transaction(async (outerTx) => {
       await outerTx.insert("users", { name: "Outer", email: "outer@example.com", age: 30, active: true });
 
@@ -97,9 +139,46 @@ describe("TypedPg Transaction Tests", () => {
       });
     })).rejects.toThrow("Inner transaction error");
 
-    expect(mockPool).toHaveExecutedQueries(4); // BEGIN + INSERT + BEGIN + ROLLBACK
+    expect(mockPool).toHaveExecutedQueries(5); // BEGIN + INSERT + BEGIN + ROLLBACK + ROLLBACK
+    expect(mockPool.getQueriesMatching("BEGIN")).toHaveLength(2);
     expect(mockPool.getQueriesMatching("COMMIT")).toHaveLength(0);
-    expect(mockPool.getQueriesMatching("ROLLBACK")).toHaveLength(1);
+    expect(mockPool.getQueriesMatching("ROLLBACK")).toHaveLength(2);
+  });
+
+  it("should handle undefined return value from transaction", async () => {
+    const result = await db.transaction(async (trx) => {
+      await trx.insert("users", {
+        name: "Test",
+        email: "test@example.com",
+        age: 30,
+        active: true,
+      });
+      // Don't return anything
+    });
+
+    expect(result).toBeUndefined();
+    expect(mockPool).toHaveExecutedQueries(3); // BEGIN + INSERT + COMMIT
+    expect(mockPool.getQueriesMatching("BEGIN")).toHaveLength(1);
+    expect(mockPool.getQueriesMatching("COMMIT")).toHaveLength(1);
+  });
+
+  it("should handle invalid client object in transaction", async () => {
+    const invalidClient = {
+      query: () => { throw new Error("Cannot read properties of undefined"); },
+      release: jest.fn()
+    };
+    mockPool.connect = jest.fn().mockResolvedValue(invalidClient);
+
+    await expect(db.transaction(async (trx) => {
+      await trx.insert("users", {
+        name: "Test",
+        email: "test@example.com",
+        age: 30,
+        active: true
+      });
+    })).rejects.toThrow("Cannot read properties of undefined");
+
+    expect(invalidClient.release).toHaveBeenCalled();
   });
 
   it("should handle database connection errors", async () => {

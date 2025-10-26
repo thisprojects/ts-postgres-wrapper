@@ -155,10 +155,17 @@ describe("TypedPg Data Type Handling", () => {
       expect(mockPool.getLastQuery().values).toContain(null);
     });
 
-    it("should throw error when using NULL in WHERE clause", async () => {
-      expect(() => {
-        db.table("advanced_types").where("nullable_col", "=", null);
-      }).toThrow("WHERE conditions cannot have null or undefined values");
+    it("should handle NULL in WHERE clause", async () => {
+      mockPool.setMockResults([]);
+
+      await db.table("advanced_types")
+        .where("nullable_col", "=", null)
+        .execute();
+
+      expect(mockPool).toHaveExecutedQueryWithParams(
+        "SELECT * FROM advanced_types WHERE nullable_col = $1",
+        [null]
+      );
     });
 
     it("should handle IS NULL in raw query", async () => {
