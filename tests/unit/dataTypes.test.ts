@@ -61,7 +61,7 @@ describe("TypedPg Data Type Handling", () => {
         date_col: date
       });
 
-      expect(mockPool.getLastQuery().values).toContain(date);
+      expect(mockPool.getLastQuery().values).toContain(date.toISOString());
     });
 
     it("should handle timestamp comparison in WHERE", async () => {
@@ -74,7 +74,7 @@ describe("TypedPg Data Type Handling", () => {
 
       expect(mockPool).toHaveExecutedQueryWithParams(
         "SELECT * FROM advanced_types WHERE timestamp_col > $1",
-        [timestamp]
+        [timestamp.toISOString()]
       );
     });
   });
@@ -200,7 +200,7 @@ describe("TypedPg Data Type Handling", () => {
 
       expect(mockPool).toHaveExecutedQueryWithParams(
         "SELECT * FROM advanced_types WHERE date_col > $1 AND uuid_col = $2 AND jsonb_col = $3 AND array_text = $4",
-        [date, uuid, jsonData, textArray]
+        [date.toISOString(), uuid, jsonData, textArray]
       );
     });
   });

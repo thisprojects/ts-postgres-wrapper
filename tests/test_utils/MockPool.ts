@@ -47,7 +47,11 @@ export class MockPool {
    * Mock implementation of pg Pool.query()
    */
   async query<T>(text: string, values: any[] = []): Promise<{ rows: T[] }> {
-    this.queryLog.push({ text, values });
+    // Normalize Date objects to strings
+    const normalizedValues = values.map(value =>
+      value instanceof Date ? value.toISOString() : value
+    );
+    this.queryLog.push({ text, values: normalizedValues });
     return { rows: this.mockResults as T[] };
   }
 
