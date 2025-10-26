@@ -1,4 +1,4 @@
-# ts-postgres-wrapper
+# postgres-query-builder-ts
 
 A TypeScript wrapper for node-postgres (pg) that provides type-safe queries with autocomplete and compile-time type checking.
 
@@ -27,7 +27,7 @@ const user = await db
 ## Installation
 
 ```bash
-npm install ts-postgres-wrapper pg
+npm install postgres-query-builder-ts pg
 npm install --save-dev @types/pg
 ```
 
@@ -61,7 +61,7 @@ export interface DatabaseSchema {
 
 ```typescript
 import { Pool } from "pg";
-import { createTypedPg } from "ts-postgres-wrapper";
+import { createTypedPg } from "postgres-query-builder-ts";
 import type { DatabaseSchema } from "./schema";
 
 const pool = new Pool({
@@ -368,7 +368,7 @@ const result = await pool.query(
 );
 const users = result.rows; // any[]
 
-// After (ts-postgres-wrapper)
+// After (postgres-query-builder-ts)
 const users = await db
   .table("users")
   .select("id", "name")

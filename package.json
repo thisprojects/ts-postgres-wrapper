@@ -1,5 +1,5 @@
 {
-  "name": "ts-postgres-wrapper",
+  "name": "postgres-query-builder-ts",
   "version": "0.1.0",
   "description": "TypeScript wrapper for type-safe queries with node-postgres",
   "main": "dist/index.js",
