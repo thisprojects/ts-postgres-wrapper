@@ -3,6 +3,32 @@ import { Pool } from "pg";
 /**
  * Extract column names from a table type
  */
+/**
+ * JSON operators supported by PostgreSQL
+ */
+type JSONOperator =
+  | "->"   // Get JSON object field as JSON
+  | "->>"  // Get JSON object field as text
+  | "#>"   // Get JSON object at specified path as JSON
+  | "#>>"  // Get JSON object at specified path as text
+  | "@>"   // Contains JSON
+  | "<@"   // Is contained by JSON
+  | "?"    // Does key/element exist
+  | "?|"   // Do any of these array strings exist as top-level keys
+  | "?&"   // Do all of these array strings exist as top-level keys
+  | "@?"   // JSONPath match
+  | "@@";  // JSONPath predicate match
+
+/**
+ * JSON path expression (e.g. '{a,b,c}' or '$.a.b.c')
+ */
+type JSONPath = string[] | string;
+
+/**
+ * JSON value types that can be used in queries
+ */
+type JSONValue = Record<string, any> | any[] | string | number | boolean | null;
+
 type ColumnNames<T> = keyof T & string;
 
 /**
@@ -282,17 +308,17 @@ export class TypedQuery<
    */
   where<K extends ColumnNames<Row>>(
     column: K,
-    operator: "=" | "!=" | ">" | "<" | ">=" | "<=" | "LIKE" | "ILIKE" | "NOT ILIKE" | "IN" | "BETWEEN" | "IS NULL" | "IS NOT NULL",
-    value: Row[K] | Row[K][]
+    operator: "=" | "!=" | ">" | "<" | ">=" | "<=" | "LIKE" | "ILIKE" | "NOT ILIKE" | "IN" | "BETWEEN" | "IS NULL" | "IS NOT NULL" | JSONOperator,
+    value: Row[K] | Row[K][] | JSONValue | JSONPath
   ): this;
   where(
     column: string,
-    operator: "=" | "!=" | ">" | "<" | ">=" | "<=" | "LIKE" | "ILIKE" | "NOT ILIKE" | "IN" | "BETWEEN" | "IS NULL" | "IS NOT NULL",
+    operator: "=" | "!=" | ">" | "<" | ">=" | "<=" | "LIKE" | "ILIKE" | "NOT ILIKE" | "IN" | "BETWEEN" | "IS NULL" | "IS NOT NULL" | JSONOperator,
     value: any
   ): this;
   where(
     column: any,
-    operator: "=" | "!=" | ">" | "<" | ">=" | "<=" | "LIKE" | "ILIKE" | "NOT ILIKE" | "IN" | "BETWEEN" | "IS NULL" | "IS NOT NULL",
+    operator: "=" | "!=" | ">" | "<" | ">=" | "<=" | "LIKE" | "ILIKE" | "NOT ILIKE" | "IN" | "BETWEEN" | "IS NULL" | "IS NOT NULL" | JSONOperator,
     value: any
   ): this {
     if (this.whereClause) {
@@ -316,6 +342,32 @@ export class TypedQuery<
       this.paramCounter += 2;
     } else if (operator === "IS NULL" || operator === "IS NOT NULL") {
       this.whereClause += `${qualifiedColumn} ${operator}`;
+    } else if (operator === "->" || operator === "->>" || operator === "#>" || operator === "#>>") {
+      // JSON field/path access operators
+      this.whereClause += `${qualifiedColumn} ${operator} $${this.paramCounter}`;
+      this.whereParams.push(value);
+      this.paramCounter++;
+    } else if (operator === "@>" || operator === "<@") {
+      // JSON containment operators
+      this.whereClause += `${qualifiedColumn} ${operator} $${this.paramCounter}::jsonb`;
+      this.whereParams.push(JSON.stringify(value));
+      this.paramCounter++;
+    } else if (operator === "?" || operator === "?|" || operator === "?&") {
+      // JSON key existence operators
+      if (Array.isArray(value) && (operator === "?|" || operator === "?&")) {
+        this.whereClause += `${qualifiedColumn} ${operator} $${this.paramCounter}::text[]`;
+        this.whereParams.push(value);
+        this.paramCounter++;
+      } else {
+        this.whereClause += `${qualifiedColumn} ${operator} $${this.paramCounter}`;
+        this.whereParams.push(value);
+        this.paramCounter++;
+      }
+    } else if (operator === "@?" || operator === "@@") {
+      // JSONPath operators
+      this.whereClause += `${qualifiedColumn} ${operator} $${this.paramCounter}`;
+      this.whereParams.push(value);
+      this.paramCounter++;
     } else {
       let finalOperator = operator;
       if (this.caseInsensitive && (operator === "=" || operator === "!=" || operator === "LIKE")) {
@@ -339,17 +391,17 @@ export class TypedQuery<
    */
   orWhere<K extends ColumnNames<Row>>(
     column: K,
-    operator: "=" | "!=" | ">" | "<" | ">=" | "<=" | "LIKE" | "ILIKE" | "NOT ILIKE",
-    value: Row[K]
+    operator: "=" | "!=" | ">" | "<" | ">=" | "<=" | "LIKE" | "ILIKE" | "NOT ILIKE" | JSONOperator,
+    value: Row[K] | JSONValue | JSONPath
   ): this;
   orWhere(
     column: string,
-    operator: "=" | "!=" | ">" | "<" | ">=" | "<=" | "LIKE" | "ILIKE" | "NOT ILIKE" | "IN",
+    operator: "=" | "!=" | ">" | "<" | ">=" | "<=" | "LIKE" | "ILIKE" | "NOT ILIKE" | "IN" | JSONOperator,
     value: any
   ): this;
   orWhere(
     column: any,
-    operator: "=" | "!=" | ">" | "<" | ">=" | "<=" | "LIKE" | "ILIKE" | "NOT ILIKE" | "IN",
+    operator: "=" | "!=" | ">" | "<" | ">=" | "<=" | "LIKE" | "ILIKE" | "NOT ILIKE" | "IN" | JSONOperator,
     value: any
   ): this {
     if (this.whereClause) {
@@ -366,6 +418,32 @@ export class TypedQuery<
         .join(", ");
       this.whereClause += `${qualifiedColumn} IN (${placeholders})`;
       this.whereParams.push(...value);
+    } else if (operator === "->" || operator === "->>" || operator === "#>" || operator === "#>>") {
+      // JSON field/path access operators
+      this.whereClause += `${qualifiedColumn} ${operator} $${this.paramCounter}`;
+      this.whereParams.push(value);
+      this.paramCounter++;
+    } else if (operator === "@>" || operator === "<@") {
+      // JSON containment operators
+      this.whereClause += `${qualifiedColumn} ${operator} $${this.paramCounter}::jsonb`;
+      this.whereParams.push(JSON.stringify(value));
+      this.paramCounter++;
+    } else if (operator === "?" || operator === "?|" || operator === "?&") {
+      // JSON key existence operators
+      if (Array.isArray(value) && (operator === "?|" || operator === "?&")) {
+        this.whereClause += `${qualifiedColumn} ${operator} $${this.paramCounter}::text[]`;
+        this.whereParams.push(value);
+        this.paramCounter++;
+      } else {
+        this.whereClause += `${qualifiedColumn} ${operator} $${this.paramCounter}`;
+        this.whereParams.push(value);
+        this.paramCounter++;
+      }
+    } else if (operator === "@?" || operator === "@@") {
+      // JSONPath operators
+      this.whereClause += `${qualifiedColumn} ${operator} $${this.paramCounter}`;
+      this.whereParams.push(value);
+      this.paramCounter++;
     } else {
       let finalOperator = operator;
       if (this.caseInsensitive && (operator === "=" || operator === "!=" || operator === "LIKE")) {
@@ -488,6 +566,93 @@ export class TypedQuery<
     const aggFuncs = ["COUNT", "SUM", "AVG", "MIN", "MAX", "VARIANCE", "FIRST_VALUE", "ROW_NUMBER", "RANK", "DENSE_RANK"];
     const upperExpr = expr.toUpperCase();
     return aggFuncs.some(func => upperExpr.includes(func + "(")) || upperExpr.includes(" OVER ");
+  }
+
+  /**
+   * Get JSON object field
+   */
+  jsonField<T extends Record<string, any>>(column: string, field: keyof T): string {
+    return `${this.qualifyColumnName(column)}->'${String(field)}'`;
+  }
+
+  /**
+   * Get JSON object field as text
+   */
+  jsonFieldAsText<T extends Record<string, any>>(column: string, field: keyof T): string {
+    return `${this.qualifyColumnName(column)}->>'${String(field)}'`;
+  }
+
+  /**
+   * Get JSON object at path
+   */
+  jsonPath(column: string, path: string[]): string {
+    const pathStr = path.map(p => `'${p}'`).join(",");
+    return `${this.qualifyColumnName(column)}#>ARRAY[${pathStr}]`;
+  }
+
+  /**
+   * Get JSON object at path as text
+   */
+  jsonPathAsText(column: string, path: string[]): string {
+    const pathStr = path.map(p => `'${p}'`).join(",");
+    return `${this.qualifyColumnName(column)}#>>ARRAY[${pathStr}]`;
+  }
+
+  /**
+   * Check if JSON object exists at path
+   */
+  hasJsonPath(column: string, path: string[]): this {
+    const pathStr = path.map(p => `'${p}'`).join(",");
+    return this.where(`${this.qualifyColumnName(column)}#>ARRAY[${pathStr}]`, "IS NOT NULL", null);
+  }
+
+  /**
+   * Check if JSON object contains the given JSON value
+   */
+  containsJson<K extends ColumnNames<Row>>(column: K, value: Row[K] extends Record<string, any> ? Partial<Row[K]> : never): this {
+    return this.where(column, "@>", value);
+  }
+
+  /**
+   * Check if JSON object is contained within the given JSON value
+   */
+  containedInJson<K extends ColumnNames<Row>>(column: K, value: Row[K] extends Record<string, any> ? Record<string, any> : never): this {
+    return this.where(column, "<@", value);
+  }
+
+  /**
+   * Check if JSON object has the given key at top level
+   */
+  hasJsonKey(column: string, key: string): this {
+    return this.where(column, "?", key);
+  }
+
+  /**
+   * Check if JSON object has any of the given keys at top level
+   */
+  hasAnyJsonKey(column: string, keys: string[]): this {
+    return this.where(column, "?|", keys);
+  }
+
+  /**
+   * Check if JSON object has all of the given keys at top level
+   */
+  hasAllJsonKeys(column: string, keys: string[]): this {
+    return this.where(column, "?&", keys);
+  }
+
+  /**
+   * Query JSON object with JSONPath expression
+   */
+  jsonPathQuery(column: string, path: string): this {
+    return this.where(column, "@?", path);
+  }
+
+  /**
+   * Match JSON object with JSONPath predicate
+   */
+  jsonPathMatch(column: string, path: string): this {
+    return this.where(column, "@@", path);
   }
 
   /**
