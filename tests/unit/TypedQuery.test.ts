@@ -1618,6 +1618,124 @@ describe("TypedQuery", () => {
     });
   });
 
+  describe("Case sensitivity", () => {
+    it("should handle case sensitive equals by default", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query.where("name", "=", "John").execute();
+
+      expect(mockPool).toHaveExecutedQueryWithParams(
+        "SELECT * FROM users WHERE name = $1",
+        ["John"]
+      );
+    });
+
+    it("should convert equals to ILIKE when case insensitive", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query.ignoreCase().where("name", "=", "John").execute();
+
+      expect(mockPool).toHaveExecutedQueryWithParams(
+        "SELECT * FROM users WHERE name ILIKE $1",
+        ["John"]
+      );
+    });
+
+    it("should convert not equals to NOT ILIKE when case insensitive", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query.ignoreCase().where("name", "!=", "John").execute();
+
+      expect(mockPool).toHaveExecutedQueryWithParams(
+        "SELECT * FROM users WHERE name NOT ILIKE $1",
+        ["John"]
+      );
+    });
+
+    it("should convert LIKE to ILIKE when case insensitive", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query.ignoreCase().where("name", "LIKE", "%John%").execute();
+
+      expect(mockPool).toHaveExecutedQueryWithParams(
+        "SELECT * FROM users WHERE name ILIKE $1",
+        ["%John%"]
+      );
+    });
+
+    it("should allow switching between case sensitive and insensitive", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query
+        .ignoreCase()
+        .where("name", "=", "John")
+        .matchCase()
+        .where("email", "=", "JOHN@example.com")
+        .execute();
+
+      expect(mockPool).toHaveExecutedQueryWithParams(
+        "SELECT * FROM users WHERE name ILIKE $1 AND email = $2",
+        ["John", "JOHN@example.com"]
+      );
+    });
+
+    it("should handle case sensitivity with multiple conditions", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query
+        .ignoreCase()
+        .where("name", "LIKE", "%John%")
+        .where("email", "=", "john@example.com")
+        .execute();
+
+      expect(mockPool).toHaveExecutedQueryWithParams(
+        "SELECT * FROM users WHERE name ILIKE $1 AND email ILIKE $2",
+        ["%John%", "john@example.com"]
+      );
+    });
+
+    it("should preserve case sensitivity setting after cloning", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      ).ignoreCase();
+
+      const clonedQuery = query.clone();
+      await clonedQuery.where("name", "=", "John").execute();
+
+      expect(mockPool).toHaveExecutedQueryWithParams(
+        "SELECT * FROM users WHERE name ILIKE $1",
+        ["John"]
+      );
+    });
+  });
+
   describe("DISTINCT queries", () => {
     it("should handle basic DISTINCT query", async () => {
       mockPool.setMockResults([]);

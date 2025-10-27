@@ -39,7 +39,24 @@ export class TypedQuery<
   private limitClause: string = "";
   private offsetClause: string = "";
   private paramCounter: number = 1;
+  private caseInsensitive: boolean = false;
   private joins: JoinConfig[] = [];
+
+  /**
+   * Make text comparisons case insensitive
+   */
+  ignoreCase(): this {
+    this.caseInsensitive = true;
+    return this;
+  }
+
+  /**
+   * Make text comparisons case sensitive (default)
+   */
+  matchCase(): this {
+    this.caseInsensitive = false;
+    return this;
+  }
   private schema: Schema;
   private joinedTables: Set<string> = new Set();
   private groupByColumns: string[] = [];
@@ -64,7 +81,7 @@ export class TypedQuery<
   /**
    * Clone the current query with all its state
    */
-  private clone<NewRow extends Record<string, any> = Row>(): TypedQuery<
+  clone<NewRow extends Record<string, any> = Row>(): TypedQuery<
     TableName,
     NewRow,
     Schema
@@ -89,6 +106,7 @@ export class TypedQuery<
     newQuery.havingParams = [...this.havingParams];
     newQuery.windowFunctions = [...this.windowFunctions];
     newQuery.isDistinct = this.isDistinct;
+    newQuery.caseInsensitive = this.caseInsensitive;
     return newQuery;
   }
 
@@ -191,17 +209,17 @@ export class TypedQuery<
    */
   where<K extends ColumnNames<Row>>(
     column: K,
-    operator: "=" | "!=" | ">" | "<" | ">=" | "<=" | "LIKE" | "ILIKE" | "IN" | "BETWEEN" | "IS NULL" | "IS NOT NULL",
+    operator: "=" | "!=" | ">" | "<" | ">=" | "<=" | "LIKE" | "ILIKE" | "NOT ILIKE" | "IN" | "BETWEEN" | "IS NULL" | "IS NOT NULL",
     value: Row[K] | Row[K][]
   ): this;
   where(
     column: string,
-    operator: "=" | "!=" | ">" | "<" | ">=" | "<=" | "LIKE" | "ILIKE" | "IN" | "BETWEEN" | "IS NULL" | "IS NOT NULL",
+    operator: "=" | "!=" | ">" | "<" | ">=" | "<=" | "LIKE" | "ILIKE" | "NOT ILIKE" | "IN" | "BETWEEN" | "IS NULL" | "IS NOT NULL",
     value: any
   ): this;
   where(
     column: any,
-    operator: "=" | "!=" | ">" | "<" | ">=" | "<=" | "LIKE" | "ILIKE" | "IN" | "BETWEEN" | "IS NULL" | "IS NOT NULL",
+    operator: "=" | "!=" | ">" | "<" | ">=" | "<=" | "LIKE" | "ILIKE" | "NOT ILIKE" | "IN" | "BETWEEN" | "IS NULL" | "IS NOT NULL",
     value: any
   ): this {
     if (this.whereClause) {
@@ -226,7 +244,17 @@ export class TypedQuery<
     } else if (operator === "IS NULL" || operator === "IS NOT NULL") {
       this.whereClause += `${qualifiedColumn} ${operator}`;
     } else {
-      this.whereClause += `${qualifiedColumn} ${operator} $${this.paramCounter}`;
+      let finalOperator = operator;
+      if (this.caseInsensitive && (operator === "=" || operator === "!=" || operator === "LIKE")) {
+        if (operator === "=") finalOperator = "ILIKE";
+        else if (operator === "!=") {
+          finalOperator = "NOT ILIKE";
+          value = String(value).replace(/^%|%$/g, ''); // Remove wildcards for exact match
+        }
+        else if (operator === "LIKE") finalOperator = "ILIKE";
+        value = String(value);
+      }
+      this.whereClause += `${qualifiedColumn} ${finalOperator} $${this.paramCounter}`;
       this.whereParams.push(value);
       this.paramCounter++;
     }
@@ -238,17 +266,17 @@ export class TypedQuery<
    */
   orWhere<K extends ColumnNames<Row>>(
     column: K,
-    operator: "=" | "!=" | ">" | "<" | ">=" | "<=" | "LIKE" | "ILIKE",
+    operator: "=" | "!=" | ">" | "<" | ">=" | "<=" | "LIKE" | "ILIKE" | "NOT ILIKE",
     value: Row[K]
   ): this;
   orWhere(
     column: string,
-    operator: "=" | "!=" | ">" | "<" | ">=" | "<=" | "LIKE" | "ILIKE" | "IN",
+    operator: "=" | "!=" | ">" | "<" | ">=" | "<=" | "LIKE" | "ILIKE" | "NOT ILIKE" | "IN",
     value: any
   ): this;
   orWhere(
     column: any,
-    operator: "=" | "!=" | ">" | "<" | ">=" | "<=" | "LIKE" | "ILIKE" | "IN",
+    operator: "=" | "!=" | ">" | "<" | ">=" | "<=" | "LIKE" | "ILIKE" | "NOT ILIKE" | "IN",
     value: any
   ): this {
     if (this.whereClause) {
@@ -266,7 +294,17 @@ export class TypedQuery<
       this.whereClause += `${qualifiedColumn} IN (${placeholders})`;
       this.whereParams.push(...value);
     } else {
-      this.whereClause += `${qualifiedColumn} ${operator} $${this.paramCounter}`;
+      let finalOperator = operator;
+      if (this.caseInsensitive && (operator === "=" || operator === "!=" || operator === "LIKE")) {
+        if (operator === "=") finalOperator = "ILIKE";
+        else if (operator === "!=") {
+          finalOperator = "NOT ILIKE";
+          value = String(value).replace(/^%|%$/g, ''); // Remove wildcards for exact match
+        }
+        else if (operator === "LIKE") finalOperator = "ILIKE";
+        value = String(value);
+      }
+      this.whereClause += `${qualifiedColumn} ${finalOperator} $${this.paramCounter}`;
       this.whereParams.push(value);
       this.paramCounter++;
     }
@@ -384,7 +422,7 @@ export class TypedQuery<
    */
   having(
     column: string,
-    operator: "=" | "!=" | ">" | "<" | ">=" | "<=" | "LIKE" | "ILIKE" | "IN",
+    operator: "=" | "!=" | ">" | "<" | ">=" | "<=" | "LIKE" | "ILIKE" | "NOT ILIKE" | "IN",
     value: any
   ): this {
     if (!this.groupByColumns.length) {
