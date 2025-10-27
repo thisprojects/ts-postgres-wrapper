@@ -21,6 +21,11 @@ describe("Security Features", () => {
     mockPool = new MockPool();
   });
 
+  afterAll(async () => {
+    // Allow any pending timers to complete
+    await new Promise(resolve => setTimeout(resolve, 100));
+  });
+
   describe("stripSqlComments", () => {
     it("should strip block comments", () => {
       const sql = "SELECT * FROM users /* this is a comment */ WHERE id = 1";
@@ -291,6 +296,8 @@ WHERE id = 1`;
 
   describe("Rate limiting for batch operations", () => {
     it("should enforce rate limiting on batchInsert", async () => {
+      jest.useRealTimers(); // Ensure we use real timers for this test
+
       const db = new TypedPg<TestSchema>(mockPool as any, undefined, {
         security: {
           rateLimitBatch: true,

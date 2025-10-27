@@ -1641,7 +1641,13 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
    * Sleep for a given duration
    */
   private sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise(resolve => {
+      const timer = setTimeout(resolve, ms);
+      // Prevent the timer from keeping the process alive
+      if (timer.unref) {
+        timer.unref();
+      }
+    });
   }
 
   /**
@@ -1705,12 +1711,16 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
         if (this.options.timeout && this.options.timeout > 0) {
           result = await Promise.race([
             this.pool.query(query, params),
-            new Promise((_, reject) =>
-              setTimeout(
+            new Promise((_, reject) => {
+              const timer = setTimeout(
                 () => reject(new DatabaseError('Query timeout exceeded', 'TIMEOUT', context)),
                 this.options.timeout
-              )
-            )
+              );
+              // Prevent the timer from keeping the process alive
+              if (timer.unref) {
+                timer.unref();
+              }
+            })
           ]);
         } else {
           result = await this.pool.query(query, params);
