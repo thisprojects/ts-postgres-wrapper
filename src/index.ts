@@ -1,6 +1,51 @@
 import { Pool } from "pg";
 
 /**
+ * Query logging interface
+ */
+export interface QueryLogEntry {
+  query: string;
+  params: any[];
+  duration?: number;
+  timestamp: Date;
+  error?: Error;
+}
+
+export type LogLevel = "debug" | "info" | "warn" | "error";
+
+export interface QueryLogger {
+  log(level: LogLevel, entry: QueryLogEntry): void;
+}
+
+/**
+ * Default console logger
+ */
+export class ConsoleLogger implements QueryLogger {
+  constructor(private minLevel: LogLevel = "info") {}
+
+  log(level: LogLevel, entry: QueryLogEntry): void {
+    const levels: LogLevel[] = ["debug", "info", "warn", "error"];
+    if (levels.indexOf(level) < levels.indexOf(this.minLevel)) {
+      return;
+    }
+
+    const timestamp = entry.timestamp.toISOString();
+    const duration = entry.duration ? `${entry.duration}ms` : "N/A";
+    const message = `[${timestamp}] [${level.toUpperCase()}] Query: ${entry.query} | Params: ${JSON.stringify(entry.params)} | Duration: ${duration}`;
+
+    if (entry.error) {
+      console.error(message, entry.error);
+    } else if (level === "error") {
+      console.error(message);
+    } else if (level === "warn") {
+      console.warn(message);
+    } else {
+      console.log(message);
+    }
+  }
+}
+
+/**
  * Extract column names from a table type
  */
 /**
@@ -100,6 +145,7 @@ export class TypedQuery<
   private paramCounter: number = 1;
   private caseInsensitive: boolean = false;
   private joins: JoinConfig[] = [];
+  private logger?: QueryLogger;
 
   /**
    * Make text comparisons case insensitive
@@ -128,12 +174,14 @@ export class TypedQuery<
     pool: Pool,
     tableName: TableName,
     schema?: Schema,
-    tableAlias?: string
+    tableAlias?: string,
+    logger?: QueryLogger
   ) {
     this.pool = pool;
     this.tableName = tableName;
     this.tableAlias = tableAlias;
     this.schema = schema || ({} as Schema);
+    this.logger = logger;
     this.joinedTables.add(String(tableName));
   }
 
@@ -149,7 +197,8 @@ export class TypedQuery<
       this.pool,
       this.tableName,
       this.schema,
-      this.tableAlias
+      this.tableAlias,
+      this.logger
     );
     newQuery.selectedColumns = [...this.selectedColumns];
     newQuery.whereClause = this.whereClause;
@@ -833,8 +882,39 @@ export class TypedQuery<
       this.havingClause
     }${this.orderByClause}${this.limitClause}${this.offsetClause}`;
 
-    const result = await this.pool.query<Row>(query, [...this.whereParams, ...this.havingParams]);
-    return result.rows;
+    const params = [...this.whereParams, ...this.havingParams];
+    const startTime = Date.now();
+    const timestamp = new Date();
+
+    try {
+      const result = await this.pool.query<Row>(query, params);
+      const duration = Date.now() - startTime;
+
+      if (this.logger) {
+        this.logger.log("debug", {
+          query,
+          params,
+          duration,
+          timestamp
+        });
+      }
+
+      return result.rows;
+    } catch (error) {
+      const duration = Date.now() - startTime;
+
+      if (this.logger) {
+        this.logger.log("error", {
+          query,
+          params,
+          duration,
+          timestamp,
+          error: error as Error
+        });
+      }
+
+      throw error;
+    }
   }
 
   /**
@@ -852,11 +932,39 @@ export class TypedQuery<
     const query = `SELECT COUNT(*) as count ${this.buildFromClause()}${
       this.whereClause
     }`;
-    const result = await this.pool.query<{ count: string }>(
-      query,
-      this.whereParams
-    );
-    return parseInt(result.rows[0].count, 10);
+    const params = this.whereParams;
+    const startTime = Date.now();
+    const timestamp = new Date();
+
+    try {
+      const result = await this.pool.query<{ count: string }>(query, params);
+      const duration = Date.now() - startTime;
+
+      if (this.logger) {
+        this.logger.log("debug", {
+          query,
+          params,
+          duration,
+          timestamp
+        });
+      }
+
+      return parseInt(result.rows[0].count, 10);
+    } catch (error) {
+      const duration = Date.now() - startTime;
+
+      if (this.logger) {
+        this.logger.log("error", {
+          query,
+          params,
+          duration,
+          timestamp,
+          error: error as Error
+        });
+      }
+
+      throw error;
+    }
   }
 
   /**
@@ -1009,10 +1117,64 @@ export class TypedQuery<
 export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
   private pool: Pool;
   private schema: Schema;
+  private logger?: QueryLogger;
 
-  constructor(pool: Pool, schema?: Schema) {
+  constructor(pool: Pool, schema?: Schema, logger?: QueryLogger) {
     this.pool = pool;
     this.schema = schema || ({} as Schema);
+    this.logger = logger;
+  }
+
+  /**
+   * Set or update the query logger
+   */
+  setLogger(logger: QueryLogger | undefined): void {
+    this.logger = logger;
+  }
+
+  /**
+   * Get the current logger
+   */
+  getLogger(): QueryLogger | undefined {
+    return this.logger;
+  }
+
+  /**
+   * Execute a query with logging
+   */
+  private async executeWithLogging<T = any>(query: string, params: any[]): Promise<{ rows: T[] }> {
+    const startTime = Date.now();
+    const timestamp = new Date();
+
+    try {
+      const result = await this.pool.query(query, params);
+      const duration = Date.now() - startTime;
+
+      if (this.logger) {
+        this.logger.log("debug", {
+          query,
+          params,
+          duration,
+          timestamp
+        });
+      }
+
+      return result as { rows: T[] };
+    } catch (error) {
+      const duration = Date.now() - startTime;
+
+      if (this.logger) {
+        this.logger.log("error", {
+          query,
+          params,
+          duration,
+          timestamp,
+          error: error as Error
+        });
+      }
+
+      throw error;
+    }
   }
 
   /**
@@ -1026,7 +1188,8 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
       this.pool,
       tableName,
       this.schema,
-      alias
+      alias,
+      this.logger
     );
   }
 
@@ -1061,7 +1224,7 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
       ", "
     )}) VALUES ${values} RETURNING *`;
 
-    const result = await this.pool.query<Schema[T]>(query, params);
+    const result = await this.executeWithLogging<Schema[T]>(query, params);
     return result.rows;
   }
 
@@ -1119,7 +1282,7 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
       tableName
     )} SET ${setClause} WHERE ${whereClause} RETURNING *`;
 
-    const result = await this.pool.query<Schema[T]>(query, params);
+    const result = await this.executeWithLogging<Schema[T]>(query, params);
     return result.rows;
   }
 
@@ -1161,7 +1324,7 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
       tableName
     )} WHERE ${whereClause} RETURNING *`;
 
-    const result = await this.pool.query<Schema[T]>(query, params);
+    const result = await this.executeWithLogging<Schema[T]>(query, params);
     return result.rows;
   }
 
@@ -1220,7 +1383,7 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
       columns.map((col) => record[col])
     );
 
-    const result = await this.pool.query<Schema[T]>(query, params);
+    const result = await this.executeWithLogging<Schema[T]>(query, params);
     return result.rows;
   }
 
@@ -1231,7 +1394,7 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
     query: string,
     params?: any[]
   ): Promise<T[]> {
-    const result = await this.pool.query<T>(query, params);
+    const result = await this.executeWithLogging<T>(query, params || []);
     return result.rows;
   }
 
@@ -1411,7 +1574,7 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
  */
 export function createTypedPg<
   Schema extends Record<string, any> = Record<string, any>
->(poolOrConfig: Pool | string | object, schema?: Schema): TypedPg<Schema> {
+>(poolOrConfig: Pool | string | object, schema?: Schema, logger?: QueryLogger): TypedPg<Schema> {
   const pool =
     poolOrConfig instanceof Pool
       ? poolOrConfig
@@ -1421,7 +1584,7 @@ export function createTypedPg<
             : poolOrConfig
         );
 
-  return new TypedPg<Schema>(pool, schema);
+  return new TypedPg<Schema>(pool, schema, logger);
 }
 
 // Re-export Pool type for convenience
