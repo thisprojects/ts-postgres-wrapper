@@ -96,6 +96,70 @@ describe("TypedQuery", () => {
       );
     });
 
+    it("should handle IS NULL operator", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query.where("deleted_at", "IS NULL", null).execute();
+
+      expect(mockPool).toHaveExecutedQuery(
+        "SELECT * FROM users WHERE deleted_at IS NULL"
+      );
+    });
+
+    it("should handle IS NOT NULL operator", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query.where("deleted_at", "IS NOT NULL", null).execute();
+
+      expect(mockPool).toHaveExecutedQuery(
+        "SELECT * FROM users WHERE deleted_at IS NOT NULL"
+      );
+    });
+
+    it("should handle IS NULL with qualified columns", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query
+        .innerJoin("posts", "users.id", "posts.user_id")
+        .where("users.deleted_at", "IS NULL", null)
+        .execute();
+
+      expect(mockPool).toHaveExecutedQuery(
+        "SELECT * FROM users INNER JOIN posts ON users.id = posts.user_id WHERE users.deleted_at IS NULL"
+      );
+    });
+
+    it("should handle mixed NULL and regular conditions", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query
+        .where("deleted_at", "IS NULL", null)
+        .where("active", "=", true)
+        .where("manager_id", "IS NOT NULL", null)
+        .execute();
+
+      expect(mockPool).toHaveExecutedQueryWithParams(
+        "SELECT * FROM users WHERE deleted_at IS NULL AND active = $1 AND manager_id IS NOT NULL",
+        [true]
+      );
+    });
+
     it("should handle BETWEEN operator", async () => {
       mockPool.setMockResults([]);
 
