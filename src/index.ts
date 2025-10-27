@@ -274,6 +274,36 @@ export class TypedQuery<
   }
 
   /**
+   * Validate ORDER BY column
+   */
+  private validateOrderByColumn(column: string): void {
+    const isAggregateOrWindowFunc = this.isAggregateFunction(column);
+    const isQualifiedColumn = column.includes(".");
+
+    if (isAggregateOrWindowFunc) {
+      return;
+    }
+
+    const tableName = this.tableAlias || String(this.tableName);
+    const baseColumn = String(column).split(".").pop() || "";
+
+    // Allow ordering by columns in GROUP BY
+    if (this.groupByColumns.includes(this.qualifyColumnName(column))) {
+      return;
+    }
+
+    // Skip validation for qualified columns from other tables or test mode
+    if (isQualifiedColumn || !this.schema[tableName]) {
+      return;
+    }
+
+    // Check if column exists in schema
+    if (!Object.keys(this.schema[tableName]).includes(baseColumn)) {
+      throw new Error(`Invalid column name in ORDER BY: ${column}`);
+    }
+  }
+
+  /**
    * Add ORDER BY clause (supports both typed columns and string-based columns)
    */
   orderBy<K extends ColumnNames<Row>>(
@@ -282,6 +312,7 @@ export class TypedQuery<
   ): this;
   orderBy(column: string, direction?: "ASC" | "DESC"): this;
   orderBy(column: any, direction: "ASC" | "DESC" = "ASC"): this {
+    this.validateOrderByColumn(String(column));
     const qualifiedColumn = this.qualifyColumnName(String(column));
 
     if (this.orderByClause) {
@@ -314,9 +345,38 @@ export class TypedQuery<
   groupBy<K extends ColumnNames<Row>>(...columns: K[]): this;
   groupBy(...columns: string[]): this;
   groupBy(...columns: any[]): this {
+    if (columns.length === 0) {
+      throw new Error("GROUP BY clause requires at least one column");
+    }
+
+    const invalidColumns = columns.filter(col => {
+      const tableName = this.tableAlias || String(this.tableName);
+      const isQualified = String(col).includes(".");
+      // Skip validation for qualified columns and test mode
+      if (isQualified || !this.schema[tableName]) {
+        return false;
+      }
+      return !Object.keys(this.schema[tableName]).includes(String(col).split(".").pop() || "");
+    });
+
+    if (invalidColumns.length > 0) {
+      throw new Error(
+        `Invalid column names in GROUP BY: ${invalidColumns.join(", ")}`
+      );
+    }
+
     const qualifiedColumns = columns.map(col => this.qualifyColumnName(String(col)));
     this.groupByColumns.push(...qualifiedColumns);
     return this;
+  }
+
+  /**
+   * Check if expression is an aggregate function
+   */
+  private isAggregateFunction(expr: string): boolean {
+    const aggFuncs = ["COUNT", "SUM", "AVG", "MIN", "MAX", "VARIANCE", "FIRST_VALUE", "ROW_NUMBER", "RANK", "DENSE_RANK"];
+    const upperExpr = expr.toUpperCase();
+    return aggFuncs.some(func => upperExpr.includes(func + "(")) || upperExpr.includes(" OVER ");
   }
 
   /**
@@ -327,6 +387,16 @@ export class TypedQuery<
     operator: "=" | "!=" | ">" | "<" | ">=" | "<=" | "LIKE" | "ILIKE" | "IN",
     value: any
   ): this {
+    if (!this.groupByColumns.length) {
+      throw new Error("HAVING clause requires GROUP BY");
+    }
+
+    if (!this.isAggregateFunction(column) && !this.groupByColumns.includes(this.qualifyColumnName(column))) {
+      throw new Error(
+        `HAVING clause must reference either an aggregate function or a GROUP BY column: ${column}`
+      );
+    }
+
     if (this.havingClause) {
       this.havingClause += " AND ";
     } else {

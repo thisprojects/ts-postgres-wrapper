@@ -8,6 +8,7 @@ export interface TestSchema {
     email: string;
     age: number;
     active: boolean;
+    department: string;
     created_at: Date;
   };
   posts: {
@@ -46,6 +47,7 @@ export const createMockUser = (
   email: "john@example.com",
   age: 30,
   active: true,
+  department: "Engineering",
   created_at: new Date("2024-01-01T10:00:00Z"),
   ...overrides,
 });
