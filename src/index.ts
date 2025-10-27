@@ -18,6 +18,19 @@ export interface QueryLogger {
 }
 
 /**
+ * Security options for query execution
+ */
+export interface SecurityOptions {
+  maxJoins?: number; // Maximum number of JOINs allowed per query (default: 10)
+  maxWhereConditions?: number; // Maximum WHERE conditions (default: 50)
+  maxBatchSize?: number; // Maximum batch operation size (default: 1000)
+  maxQueryLength?: number; // Maximum SQL query length in characters (default: 50000)
+  allowComments?: boolean; // Allow SQL comments in queries (default: false)
+  rateLimitBatch?: boolean; // Enable rate limiting for batch operations (default: false)
+  batchRateLimit?: number; // Max batch operations per second (default: 10)
+}
+
+/**
  * Configuration options for TypedPg
  */
 export interface TypedPgOptions {
@@ -26,6 +39,7 @@ export interface TypedPgOptions {
   retryAttempts?: number; // Number of retry attempts for transient errors
   retryDelay?: number; // Delay between retries in milliseconds
   onError?: (error: Error, context: ErrorContext) => void; // Custom error handler
+  security?: SecurityOptions; // Security options for query validation
 }
 
 /**
@@ -78,6 +92,111 @@ export function isTransientError(error: any): boolean {
   ]);
 
   return transientCodes.has(error.code);
+}
+
+/**
+ * Strip SQL comments from a query string
+ * Removes both line comments (--) and block comments
+ */
+export function stripSqlComments(sql: string): string {
+  // Remove block comments /* ... */
+  let result = sql.replace(/\/\*[\s\S]*?\*\//g, '');
+
+  // Remove line comments -- ...
+  // But preserve -- in string literals
+  const lines = result.split('\n');
+  result = lines.map(line => {
+    let inString = false;
+    let stringChar = '';
+    let newLine = '';
+
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      const next = line[i + 1];
+
+      // Handle string literals
+      if ((char === "'" || char === '"') && (i === 0 || line[i - 1] !== '\\')) {
+        if (!inString) {
+          inString = true;
+          stringChar = char;
+        } else if (char === stringChar) {
+          inString = false;
+          stringChar = '';
+        }
+      }
+
+      // Check for line comment outside of strings
+      if (!inString && char === '-' && next === '-') {
+        break; // Rest of line is a comment
+      }
+
+      newLine += char;
+    }
+
+    return newLine;
+  }).join('\n');
+
+  return result.trim();
+}
+
+/**
+ * Validate query complexity to prevent DoS attacks
+ */
+export function validateQueryComplexity(
+  query: string,
+  security: SecurityOptions
+): void {
+  // Check query length
+  const maxLength = security.maxQueryLength || 50000;
+  if (query.length > maxLength) {
+    throw new DatabaseError(
+      `Query exceeds maximum length of ${maxLength} characters`,
+      'QUERY_TOO_LONG',
+      { query: query.substring(0, 200) + '...', params: [] }
+    );
+  }
+
+  // Strip comments if not allowed
+  let processedQuery = query;
+  if (!security.allowComments) {
+    const stripped = stripSqlComments(query);
+    if (stripped !== query) {
+      throw new DatabaseError(
+        'SQL comments are not allowed',
+        'COMMENTS_NOT_ALLOWED',
+        { query: query.substring(0, 200), params: [] }
+      );
+    }
+    processedQuery = stripped;
+  }
+
+  // Count JOINs
+  const maxJoins = security.maxJoins || 10;
+  const joinMatches = processedQuery.match(/\b(INNER|LEFT|RIGHT|FULL|CROSS)\s+JOIN\b/gi);
+  const joinCount = joinMatches ? joinMatches.length : 0;
+  if (joinCount > maxJoins) {
+    throw new DatabaseError(
+      `Query has ${joinCount} JOINs, maximum allowed is ${maxJoins}`,
+      'TOO_MANY_JOINS',
+      { query: processedQuery.substring(0, 200), params: [] }
+    );
+  }
+
+  // Count WHERE conditions (approximate by counting AND/OR)
+  const maxConditions = security.maxWhereConditions || 50;
+  const whereMatch = processedQuery.match(/\bWHERE\b/i);
+  if (whereMatch) {
+    const whereSection = processedQuery.substring(whereMatch.index!);
+    const andOrMatches = whereSection.match(/\b(AND|OR)\b/gi);
+    const conditionCount = (andOrMatches ? andOrMatches.length : 0) + 1;
+    if (conditionCount > maxConditions) {
+      throw new DatabaseError(
+        `Query has ${conditionCount} WHERE conditions, maximum allowed is ${maxConditions}`,
+        'TOO_MANY_CONDITIONS',
+        { query: processedQuery.substring(0, 200), params: [] }
+      );
+    }
+  }
 }
 
 /**
@@ -1436,6 +1555,7 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
   private schema: Schema;
   private logger?: QueryLogger;
   private options: TypedPgOptions;
+  private batchOperationTimestamps: number[] = [];
 
   constructor(pool: Pool, schema?: Schema, optionsOrLogger?: QueryLogger | TypedPgOptions) {
     this.pool = pool;
@@ -1525,6 +1645,40 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
   }
 
   /**
+   * Rate limit batch operations to prevent overwhelming the database
+   */
+  private async rateLimitBatchOperation(): Promise<void> {
+    if (!this.options.security?.rateLimitBatch) {
+      return;
+    }
+
+    const maxOpsPerSecond = this.options.security.batchRateLimit || 10;
+    const now = Date.now();
+    const oneSecondAgo = now - 1000;
+
+    // Remove timestamps older than 1 second
+    this.batchOperationTimestamps = this.batchOperationTimestamps.filter(
+      ts => ts > oneSecondAgo
+    );
+
+    // If we're at the limit, wait until the oldest timestamp expires
+    if (this.batchOperationTimestamps.length >= maxOpsPerSecond) {
+      const oldestTimestamp = this.batchOperationTimestamps[0];
+      const waitTime = 1000 - (now - oldestTimestamp);
+      if (waitTime > 0) {
+        await this.sleep(waitTime);
+      }
+      // Clean up again after waiting
+      this.batchOperationTimestamps = this.batchOperationTimestamps.filter(
+        ts => ts > Date.now() - 1000
+      );
+    }
+
+    // Record this operation
+    this.batchOperationTimestamps.push(Date.now());
+  }
+
+  /**
    * Execute a query with logging, timeout, and retry logic
    */
   private async executeWithLogging<T = any>(
@@ -1532,6 +1686,11 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
     params: any[],
     operation: string = 'query'
   ): Promise<{ rows: T[] }> {
+    // Validate query complexity if security options are configured
+    if (this.options.security) {
+      validateQueryComplexity(query, this.options.security);
+    }
+
     const maxAttempts = (this.options.retryAttempts || 0) + 1;
     let lastError: Error | undefined;
 
@@ -1957,14 +2116,25 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
   ): Promise<Schema[T][]> {
     if (data.length === 0) return [];
 
+    // Validate batch size if security options are configured
+    if (this.options.security?.maxBatchSize && data.length > this.options.security.maxBatchSize) {
+      throw new DatabaseError(
+        `Batch insert size ${data.length} exceeds maximum allowed ${this.options.security.maxBatchSize}`,
+        'BATCH_TOO_LARGE',
+        { query: `INSERT INTO ${table}`, params: [], operation: 'batchInsert' }
+      );
+    }
+
     // If data fits in a single chunk, insert all at once
     if (data.length <= chunkSize) {
+      await this.rateLimitBatchOperation();
       return this.insert(table, data);
     }
 
     // Split data into chunks and insert each chunk
     const results: Schema[T][] = [];
     for (let i = 0; i < data.length; i += chunkSize) {
+      await this.rateLimitBatchOperation();
       const chunk = data.slice(i, i + chunkSize);
       const chunkResults = await this.insert(table, chunk);
       results.push(...chunkResults);
@@ -1985,6 +2155,17 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
   ): Promise<Schema[T][]> {
     if (updates.length === 0) return [];
 
+    // Validate batch size if security options are configured
+    if (this.options.security?.maxBatchSize && updates.length > this.options.security.maxBatchSize) {
+      throw new DatabaseError(
+        `Batch update size ${updates.length} exceeds maximum allowed ${this.options.security.maxBatchSize}`,
+        'BATCH_TOO_LARGE',
+        { query: `UPDATE ${table}`, params: [], operation: 'batchUpdate' }
+      );
+    }
+
+    await this.rateLimitBatchOperation();
+
     // Execute all updates in a single transaction
     return this.transaction(async (tx) => {
       const promises = updates.map(update =>
@@ -2003,6 +2184,17 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
     conditions: Partial<Schema[T]>[]
   ): Promise<Schema[T][]> {
     if (conditions.length === 0) return [];
+
+    // Validate batch size if security options are configured
+    if (this.options.security?.maxBatchSize && conditions.length > this.options.security.maxBatchSize) {
+      throw new DatabaseError(
+        `Batch delete size ${conditions.length} exceeds maximum allowed ${this.options.security.maxBatchSize}`,
+        'BATCH_TOO_LARGE',
+        { query: `DELETE FROM ${table}`, params: [], operation: 'batchDelete' }
+      );
+    }
+
+    await this.rateLimitBatchOperation();
 
     // Execute all deletes in a single transaction
     return this.transaction(async (tx) => {
