@@ -757,6 +757,18 @@ export class TypedQuery<
   /**
    * Sanitize SQL identifier to prevent injection
    */
+  // PostgreSQL reserved keywords that must be quoted
+  private static readonly RESERVED_KEYWORDS = new Set([
+    'select', 'from', 'where', 'insert', 'update', 'delete', 'drop', 'table', 'create',
+    'alter', 'join', 'inner', 'outer', 'left', 'right', 'full', 'cross', 'on', 'using',
+    'and', 'or', 'not', 'in', 'is', 'null', 'like', 'between', 'exists', 'case', 'when',
+    'then', 'else', 'end', 'union', 'intersect', 'except', 'order', 'by', 'group', 'having',
+    'limit', 'offset', 'distinct', 'all', 'as', 'into', 'values', 'set', 'default',
+    'constraint', 'primary', 'foreign', 'key', 'references', 'check', 'unique', 'index',
+    'user', 'current_user', 'session_user', 'current_date', 'current_time', 'current_timestamp',
+    'true', 'false', 'unknown', 'array', 'cascade', 'restrict', 'grant', 'revoke'
+  ]);
+
   private sanitizeIdentifier(identifier: string, allowComplexExpressions: boolean = false): string {
     // If complex expressions are allowed (like JSON operators or aggregate functions), skip sanitization
     // This is used when the column is already a validated expression like data->>'field'
@@ -769,20 +781,51 @@ export class TypedQuery<
       return identifier;
     }
 
-    // Standard SQL identifiers: alphanumeric and underscore, starting with letter or underscore
-    // This pattern also allows dots for qualified names (table.column)
-    if (/^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*$/.test(identifier)) {
-      // Return unquoted for backward compatibility (valid identifiers are safe)
+    // If identifier is already quoted, validate and return it
+    if (identifier.startsWith('"') && identifier.endsWith('"')) {
+      const unquoted = identifier.slice(1, -1);
+      // Check for SQL injection in quoted identifiers (excluding properly escaped quotes)
+      // PostgreSQL uses "" to escape quotes, so we need to check for dangerous patterns
+      // without flagging properly escaped quotes
+      if (/[;'\\]|--|\*\/|\/\*/.test(unquoted)) {
+        throw new Error(`Invalid SQL identifier: ${identifier}`);
+      }
+      // Check for unescaped double quotes by replacing all "" pairs and seeing if any " remain
+      // Properly escaped quotes come in pairs: "" is ok, but a single " is not
+      const withoutEscapedQuotes = unquoted.replace(/""/g, '');
+      if (withoutEscapedQuotes.includes('"')) {
+        throw new Error(`Invalid SQL identifier: ${identifier}`);
+      }
+      // Return as-is since it's already properly quoted
       return identifier;
     }
 
-    // For special characters, check for SQL injection patterns before quoting
-    // Block obvious SQL injection attempts (semicolons, comments, etc)
+    // Block obvious SQL injection attempts (semicolons, comments, quotes, backslashes)
     if (/[;'"\\]|--|\*\/|\/\*/.test(identifier)) {
       throw new Error(`Invalid SQL identifier: ${identifier}`);
     }
 
-    // Quote the identifier and escape internal double quotes
+    // Standard SQL identifiers: alphanumeric and underscore, starting with letter or underscore
+    // This pattern also allows dots for qualified names (table.column)
+    if (/^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*$/.test(identifier)) {
+      // Check if any part is a reserved keyword
+      const parts = identifier.split('.');
+      const needsQuoting = parts.some(part => TypedQuery.RESERVED_KEYWORDS.has(part.toLowerCase()));
+
+      if (needsQuoting) {
+        // Quote each part that needs it
+        const quotedParts = parts.map(part =>
+          TypedQuery.RESERVED_KEYWORDS.has(part.toLowerCase()) ? `"${part}"` : part
+        );
+        return quotedParts.join('.');
+      }
+
+      // Return unquoted for backward compatibility (valid identifiers are safe)
+      return identifier;
+    }
+
+    // For special characters (like hyphens, Unicode), quote the identifier
+    // The identifier has already been checked for SQL injection above
     return `"${identifier.replace(/"/g, '""')}"`;
   }
 

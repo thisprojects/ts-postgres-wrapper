@@ -271,4 +271,175 @@ describe("SQL Injection Prevention", () => {
       }).rejects.toThrow("Invalid SQL identifier");
     });
   });
+
+  describe("Reserved keyword handling", () => {
+    it("should quote reserved keywords as column names", async () => {
+      interface ReservedSchema {
+        orders: {
+          id: number;
+          user: string;  // 'user' is a reserved keyword
+          select: string; // 'select' is a reserved keyword
+          order: string;  // 'order' is a reserved keyword
+        };
+      }
+
+      const query = new TypedQuery<"orders", ReservedSchema["orders"]>(
+        mockPool as any,
+        "orders"
+      );
+
+      await query.select("user", "select", "order").execute();
+
+      const executedQuery = mockPool.getLastQuery();
+      expect(executedQuery.text).toContain('"user"');
+      expect(executedQuery.text).toContain('"select"');
+      expect(executedQuery.text).toContain('"order"');
+    });
+
+    it("should quote reserved keywords in qualified names", async () => {
+      interface ReservedSchema {
+        orders: {
+          id: number;
+          user: string;
+        };
+      }
+
+      const query = new TypedQuery<"orders", ReservedSchema["orders"]>(
+        mockPool as any,
+        "orders"
+      );
+
+      await query.select("orders.user", "orders.id").execute();
+
+      const executedQuery = mockPool.getLastQuery();
+      // 'user' is reserved, should be quoted
+      expect(executedQuery.text).toContain('orders."user"');
+    });
+
+    it("should handle reserved keywords in WHERE clauses", async () => {
+      interface ReservedSchema {
+        products: {
+          id: number;
+          key: string;  // 'key' is a reserved keyword
+          value: number;
+        };
+      }
+
+      const query = new TypedQuery<"products", ReservedSchema["products"]>(
+        mockPool as any,
+        "products"
+      );
+
+      await query.where("key", "=", "test").execute();
+
+      const executedQuery = mockPool.getLastQuery();
+      expect(executedQuery.text).toContain('"key"');
+    });
+
+    it("should handle reserved keywords in ORDER BY", async () => {
+      interface ReservedSchema {
+        items: {
+          id: number;
+          order: number;  // 'order' is a reserved keyword
+        };
+      }
+
+      const query = new TypedQuery<"items", ReservedSchema["items"]>(
+        mockPool as any,
+        "items"
+      );
+
+      await query.orderBy("order", "ASC").execute();
+
+      const executedQuery = mockPool.getLastQuery();
+      expect(executedQuery.text).toContain('"order"');
+    });
+  });
+
+  describe("Quoted identifier handling", () => {
+    it("should handle pre-quoted identifiers safely", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await query.select('"name"', '"email"').execute();
+
+      const executedQuery = mockPool.getLastQuery();
+      expect(executedQuery.text).toBe('SELECT "name", "email" FROM users');
+    });
+
+    it("should reject quoted identifiers with SQL injection", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query.select('"name"; DROP TABLE users; --"').execute();
+      }).rejects.toThrow("Invalid SQL identifier");
+    });
+
+    it("should properly escape internal quotes in quoted identifiers", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      // Identifier with internal quote should be properly escaped
+      await query.select('"user""name"').execute();
+
+      const executedQuery = mockPool.getLastQuery();
+      expect(executedQuery.text).toContain('"user""name"');
+    });
+
+    it("should handle special characters by quoting", async () => {
+      interface SpecialSchema {
+        data: {
+          id: number;
+          "column-with-hyphen": string;
+          "column with space": string;
+          "列名": string; // Unicode column name
+        };
+      }
+
+      const query = new TypedQuery<"data", SpecialSchema["data"]>(
+        mockPool as any,
+        "data"
+      );
+
+      await query.select("column-with-hyphen", "column with space", "列名").execute();
+
+      const executedQuery = mockPool.getLastQuery();
+      expect(executedQuery.text).toContain('"column-with-hyphen"');
+      expect(executedQuery.text).toContain('"column with space"');
+      expect(executedQuery.text).toContain('"列名"');
+    });
+
+    it("should reject quoted identifiers with backslashes", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query.select('"name\\escape"').execute();
+      }).rejects.toThrow("Invalid SQL identifier");
+    });
+
+    it("should reject quoted identifiers with comment patterns", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query.select('"name--comment"').execute();
+      }).rejects.toThrow("Invalid SQL identifier");
+
+      await expect(async () => {
+        await query.select('"name/*comment*/"').execute();
+      }).rejects.toThrow("Invalid SQL identifier");
+    });
+  });
 });
