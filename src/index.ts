@@ -74,6 +74,24 @@ type JSONPath = string[] | string;
  */
 type JSONValue = Record<string, any> | any[] | string | number | boolean | null;
 
+/**
+ * Type-safe JSON path builder for nested object access
+ * Extracts the type at a given path in a JSON object
+ */
+type JSONPathType<T, Path extends readonly (string | number)[]> =
+  Path extends readonly [infer First, ...infer Rest] ?
+    First extends keyof T ?
+      Rest extends readonly (string | number)[] ?
+        JSONPathType<T[First], Rest> :
+        T[First] :
+      any :
+    T;
+
+/**
+ * Type-safe JSON field accessor
+ */
+type JSONField<T> = T extends Record<string, any> ? keyof T : never;
+
 type ColumnNames<T> = keyof T & string;
 
 /**
@@ -672,30 +690,64 @@ export class TypedQuery<
   }
 
   /**
-   * Get JSON object field
+   * Get JSON object field (type-safe)
+   * @template T - The type of the JSON object
+   * @param column - The column name containing JSON
+   * @param field - The field name (type-checked against T)
    */
-  jsonField<T extends Record<string, any>>(column: string, field: keyof T): string {
+  jsonField<K extends ColumnNames<Row>, T = Row[K]>(
+    column: K,
+    field: T extends Record<string, any> ? keyof T : string
+  ): string;
+  jsonField<T extends Record<string, any>>(column: string, field: keyof T): string;
+  jsonField(column: string, field: string): string {
     return `${this.qualifyColumnName(column)}->'${this.escapeSingleQuotes(String(field))}'`;
   }
 
   /**
-   * Get JSON object field as text
+   * Get JSON object field as text (type-safe)
+   * @template T - The type of the JSON object
+   * @param column - The column name containing JSON
+   * @param field - The field name (type-checked against T)
    */
-  jsonFieldAsText<T extends Record<string, any>>(column: string, field: keyof T): string {
+  jsonFieldAsText<K extends ColumnNames<Row>, T = Row[K]>(
+    column: K,
+    field: T extends Record<string, any> ? keyof T : string
+  ): string;
+  jsonFieldAsText<T extends Record<string, any>>(column: string, field: keyof T): string;
+  jsonFieldAsText(column: string, field: string): string {
     return `${this.qualifyColumnName(column)}->>'${this.escapeSingleQuotes(String(field))}'`;
   }
 
   /**
-   * Get JSON object at path
+   * Get JSON object at path (type-safe)
+   * @template T - The type of the JSON object
+   * @template P - The path tuple type
+   * @param column - The column name containing JSON
+   * @param path - Array of path segments (type-checked for valid paths)
    */
+  jsonPath<K extends ColumnNames<Row>, T = Row[K], P extends readonly string[] = readonly string[]>(
+    column: K,
+    path: P
+  ): string;
+  jsonPath(column: string, path: string[]): string;
   jsonPath(column: string, path: string[]): string {
     const pathStr = path.map(p => `'${this.escapeSingleQuotes(p)}'`).join(",");
     return `${this.qualifyColumnName(column)}#>ARRAY[${pathStr}]`;
   }
 
   /**
-   * Get JSON object at path as text
+   * Get JSON object at path as text (type-safe)
+   * @template T - The type of the JSON object
+   * @template P - The path tuple type
+   * @param column - The column name containing JSON
+   * @param path - Array of path segments (type-checked for valid paths)
    */
+  jsonPathAsText<K extends ColumnNames<Row>, T = Row[K], P extends readonly string[] = readonly string[]>(
+    column: K,
+    path: P
+  ): string;
+  jsonPathAsText(column: string, path: string[]): string;
   jsonPathAsText(column: string, path: string[]): string {
     const pathStr = path.map(p => `'${this.escapeSingleQuotes(p)}'`).join(",");
     return `${this.qualifyColumnName(column)}#>>ARRAY[${pathStr}]`;
@@ -756,6 +808,122 @@ export class TypedQuery<
    */
   jsonPathMatch(column: string, path: string): this {
     return this.where(column, "@@", path);
+  }
+
+  /**
+   * Create a JSONB set expression for updating a value at a path
+   * Usage: .select(jsonbSet("data", ["address", "city"], "New York"))
+   * Returns: jsonb_set(data, '{address,city}', '"New York"')
+   */
+  jsonbSet(column: string, path: string[], value: any, createMissing: boolean = true): string {
+    const qualifiedColumn = this.qualifyColumnName(column);
+    const pathStr = `{${path.join(',')}}`;
+    const jsonValue = typeof value === 'string' ? `"${value.replace(/"/g, '\\"')}"` : JSON.stringify(value);
+    return `jsonb_set(${qualifiedColumn}, '${pathStr}', '${jsonValue}', ${createMissing})`;
+  }
+
+  /**
+   * Create a JSONB insert expression for inserting a value at a path
+   * Usage: .select(jsonbInsert("data", ["items", "0"], "new item"))
+   * Returns: jsonb_insert(data, '{items,0}', '"new item"')
+   */
+  jsonbInsert(column: string, path: string[], value: any, insertAfter: boolean = false): string {
+    const qualifiedColumn = this.qualifyColumnName(column);
+    const pathStr = `{${path.join(',')}}`;
+    const jsonValue = typeof value === 'string' ? `"${value.replace(/"/g, '\\"')}"` : JSON.stringify(value);
+    return `jsonb_insert(${qualifiedColumn}, '${pathStr}', '${jsonValue}', ${insertAfter})`;
+  }
+
+  /**
+   * Create a JSONB delete path expression for removing a value at a path
+   * Usage: .select(jsonbDeletePath("data", ["address", "city"]))
+   * Returns: data #- '{address,city}'
+   */
+  jsonbDeletePath(column: string, path: string[]): string {
+    const qualifiedColumn = this.qualifyColumnName(column);
+    const pathStr = `{${path.join(',')}}`;
+    return `${qualifiedColumn} #- '${pathStr}'`;
+  }
+
+  /**
+   * Create a JSONB delete key expression for removing a top-level key
+   * Usage: .select(jsonbDeleteKey("data", "oldField"))
+   * Returns: data - 'oldField'
+   */
+  jsonbDeleteKey(column: string, key: string): string {
+    const qualifiedColumn = this.qualifyColumnName(column);
+    return `${qualifiedColumn} - '${this.escapeSingleQuotes(key)}'`;
+  }
+
+  /**
+   * Create a JSONB concatenation expression
+   * Usage: .select(jsonbConcat("data", { newField: "value" }))
+   * Returns: data || '{"newField":"value"}'::jsonb
+   */
+  jsonbConcat(column: string, value: Record<string, any>): string {
+    const qualifiedColumn = this.qualifyColumnName(column);
+    return `${qualifiedColumn} || '${JSON.stringify(value)}'::jsonb`;
+  }
+
+  /**
+   * Extract JSON object keys as text array
+   * Usage: .select(jsonbObjectKeys("data"))
+   * Returns: jsonb_object_keys(data)
+   */
+  jsonbObjectKeys(column: string): string {
+    const qualifiedColumn = this.qualifyColumnName(column);
+    return `jsonb_object_keys(${qualifiedColumn})`;
+  }
+
+  /**
+   * Get the type of a JSON value
+   * Usage: .select(jsonbTypeof("data", ["field"]))
+   * Returns: jsonb_typeof(data#>'{field}')
+   */
+  jsonbTypeof(column: string, path?: string[]): string {
+    const qualifiedColumn = this.qualifyColumnName(column);
+    if (path && path.length > 0) {
+      const pathStr = `{${path.join(',')}}`;
+      return `jsonb_typeof(${qualifiedColumn}#>'${pathStr}')`;
+    }
+    return `jsonb_typeof(${qualifiedColumn})`;
+  }
+
+  /**
+   * Get JSONB array length
+   * Usage: .select(jsonbArrayLength("tags"))
+   * Returns: jsonb_array_length(tags)
+   */
+  jsonbArrayLength(column: string, path?: string[]): string {
+    const qualifiedColumn = this.qualifyColumnName(column);
+    if (path && path.length > 0) {
+      const pathStr = `{${path.join(',')}}`;
+      return `jsonb_array_length(${qualifiedColumn}#>'${pathStr}')`;
+    }
+    return `jsonb_array_length(${qualifiedColumn})`;
+  }
+
+  /**
+   * Build a JSONB object from key-value pairs
+   * Usage: .select(jsonbBuildObject({ name: "John", age: 30 }))
+   * Returns: jsonb_build_object('name', 'John', 'age', 30)
+   */
+  jsonbBuildObject(obj: Record<string, any>): string {
+    const pairs = Object.entries(obj).flatMap(([key, value]) => {
+      const sqlValue = typeof value === 'string' ? `'${this.escapeSingleQuotes(value)}'` : value;
+      return [`'${this.escapeSingleQuotes(key)}'`, sqlValue];
+    });
+    return `jsonb_build_object(${pairs.join(', ')})`;
+  }
+
+  /**
+   * Build a JSONB array from values
+   * Usage: .select(jsonbBuildArray([1, 2, 3]))
+   * Returns: jsonb_build_array(1, 2, 3)
+   */
+  jsonbBuildArray(arr: any[]): string {
+    const values = arr.map(v => typeof v === 'string' ? `'${this.escapeSingleQuotes(v)}'` : v);
+    return `jsonb_build_array(${values.join(', ')})`;
   }
 
   /**
@@ -877,8 +1045,9 @@ export class TypedQuery<
    * Qualify column name if needed
    */
   private qualifyColumnName(column: string): string {
-    // Check if this is a complex expression (like JSON operators or aggregate functions)
-    const isComplexExpression = /[@?#()\[\]>]|->/.test(column);
+    // Check if this is a complex expression (like JSON operators, aggregate functions, or JSONB operations)
+    // Includes: ->, ->>, #>, #>>, @>, <@, ?, ?|, ?&, @?, @@, #-, - (subtract), || (concat), jsonb_ functions
+    const isComplexExpression = /[@?#()\[\]>]|->|#-|\s-\s|\|\||jsonb_|::jsonb/.test(column);
 
     if (isComplexExpression) {
       // For complex expressions, return as-is (already built by helper methods)
