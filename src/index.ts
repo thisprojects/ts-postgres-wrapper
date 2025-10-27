@@ -13,11 +13,15 @@ type SelectColumns<T, K extends keyof T & string> = Pick<T, K>;
 /**
  * Join configuration interface
  */
+interface JoinCondition {
+  leftColumn: string;
+  rightColumn: string;
+}
+
 interface JoinConfig {
   type: "INNER" | "LEFT" | "RIGHT" | "FULL";
   table: string;
-  leftColumn: string;
-  rightColumn: string;
+  conditions: JoinCondition[];
   alias?: string;
 }
 
@@ -136,11 +140,20 @@ export class TypedQuery<
    */
   innerJoin(
     joinedTable: string,
-    leftColumn: string,
-    rightColumn: string,
+    leftColumnOrConditions: string | JoinCondition[],
+    rightColumnOrAlias?: string,
     alias?: string
   ): TypedQuery<TableName, any, Schema> {
-    return this.addJoin("INNER", joinedTable, leftColumn, rightColumn, alias);
+    if (typeof leftColumnOrConditions === "string") {
+      // Single-column join (backward compatible)
+      return this.addJoin("INNER", joinedTable, [{
+        leftColumn: leftColumnOrConditions,
+        rightColumn: rightColumnOrAlias as string
+      }], alias);
+    } else {
+      // Compound key join
+      return this.addJoin("INNER", joinedTable, leftColumnOrConditions, rightColumnOrAlias);
+    }
   }
 
   /**
@@ -148,11 +161,20 @@ export class TypedQuery<
    */
   leftJoin(
     joinedTable: string,
-    leftColumn: string,
-    rightColumn: string,
+    leftColumnOrConditions: string | JoinCondition[],
+    rightColumnOrAlias?: string,
     alias?: string
   ): TypedQuery<TableName, any, Schema> {
-    return this.addJoin("LEFT", joinedTable, leftColumn, rightColumn, alias);
+    if (typeof leftColumnOrConditions === "string") {
+      // Single-column join (backward compatible)
+      return this.addJoin("LEFT", joinedTable, [{
+        leftColumn: leftColumnOrConditions,
+        rightColumn: rightColumnOrAlias as string
+      }], alias);
+    } else {
+      // Compound key join
+      return this.addJoin("LEFT", joinedTable, leftColumnOrConditions, rightColumnOrAlias);
+    }
   }
 
   /**
@@ -160,11 +182,20 @@ export class TypedQuery<
    */
   rightJoin(
     joinedTable: string,
-    leftColumn: string,
-    rightColumn: string,
+    leftColumnOrConditions: string | JoinCondition[],
+    rightColumnOrAlias?: string,
     alias?: string
   ): TypedQuery<TableName, any, Schema> {
-    return this.addJoin("RIGHT", joinedTable, leftColumn, rightColumn, alias);
+    if (typeof leftColumnOrConditions === "string") {
+      // Single-column join (backward compatible)
+      return this.addJoin("RIGHT", joinedTable, [{
+        leftColumn: leftColumnOrConditions,
+        rightColumn: rightColumnOrAlias as string
+      }], alias);
+    } else {
+      // Compound key join
+      return this.addJoin("RIGHT", joinedTable, leftColumnOrConditions, rightColumnOrAlias);
+    }
   }
 
   /**
@@ -172,11 +203,20 @@ export class TypedQuery<
    */
   fullJoin(
     joinedTable: string,
-    leftColumn: string,
-    rightColumn: string,
+    leftColumnOrConditions: string | JoinCondition[],
+    rightColumnOrAlias?: string,
     alias?: string
   ): TypedQuery<TableName, any, Schema> {
-    return this.addJoin("FULL", joinedTable, leftColumn, rightColumn, alias);
+    if (typeof leftColumnOrConditions === "string") {
+      // Single-column join (backward compatible)
+      return this.addJoin("FULL", joinedTable, [{
+        leftColumn: leftColumnOrConditions,
+        rightColumn: rightColumnOrAlias as string
+      }], alias);
+    } else {
+      // Compound key join
+      return this.addJoin("FULL", joinedTable, leftColumnOrConditions, rightColumnOrAlias);
+    }
   }
 
   /**
@@ -185,8 +225,7 @@ export class TypedQuery<
   private addJoin(
     type: "INNER" | "LEFT" | "RIGHT" | "FULL",
     joinedTable: string,
-    leftColumn: string,
-    rightColumn: string,
+    conditions: JoinCondition[],
     alias?: string
   ): TypedQuery<TableName, any, Schema> {
     const newQuery = this.clone<any>();
@@ -194,8 +233,7 @@ export class TypedQuery<
     newQuery.joins.push({
       type,
       table: joinedTable,
-      leftColumn,
-      rightColumn,
+      conditions,
       alias,
     });
 
@@ -496,7 +534,12 @@ export class TypedQuery<
       const joinTableRef = join.alias
         ? `${join.table} AS ${join.alias}`
         : join.table;
-      fromClause += ` ${join.type} JOIN ${joinTableRef} ON ${join.leftColumn} = ${join.rightColumn}`;
+
+      const joinConditions = join.conditions
+        .map(cond => `${cond.leftColumn} = ${cond.rightColumn}`)
+        .join(" AND ");
+
+      fromClause += ` ${join.type} JOIN ${joinTableRef} ON ${joinConditions}`;
     }
 
     return fromClause;
