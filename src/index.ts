@@ -191,17 +191,17 @@ export class TypedQuery<
    */
   where<K extends ColumnNames<Row>>(
     column: K,
-    operator: "=" | "!=" | ">" | "<" | ">=" | "<=" | "LIKE" | "ILIKE" | "IN",
+    operator: "=" | "!=" | ">" | "<" | ">=" | "<=" | "LIKE" | "ILIKE" | "IN" | "BETWEEN",
     value: Row[K] | Row[K][]
   ): this;
   where(
     column: string,
-    operator: "=" | "!=" | ">" | "<" | ">=" | "<=" | "LIKE" | "ILIKE" | "IN",
+    operator: "=" | "!=" | ">" | "<" | ">=" | "<=" | "LIKE" | "ILIKE" | "IN" | "BETWEEN",
     value: any
   ): this;
   where(
     column: any,
-    operator: "=" | "!=" | ">" | "<" | ">=" | "<=" | "LIKE" | "ILIKE" | "IN",
+    operator: "=" | "!=" | ">" | "<" | ">=" | "<=" | "LIKE" | "ILIKE" | "IN" | "BETWEEN",
     value: any
   ): this {
     if (this.whereClause) {
@@ -219,6 +219,10 @@ export class TypedQuery<
         .join(", ");
       this.whereClause += `${qualifiedColumn} IN (${placeholders})`;
       this.whereParams.push(...value);
+    } else if (operator === "BETWEEN" && Array.isArray(value) && value.length === 2) {
+      this.whereClause += `${qualifiedColumn} BETWEEN $${this.paramCounter} AND $${this.paramCounter + 1}`;
+      this.whereParams.push(value[0], value[1]);
+      this.paramCounter += 2;
     } else {
       this.whereClause += `${qualifiedColumn} ${operator} $${this.paramCounter}`;
       this.whereParams.push(value);

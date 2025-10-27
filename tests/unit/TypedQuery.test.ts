@@ -96,6 +96,57 @@ describe("TypedQuery", () => {
       );
     });
 
+    it("should handle BETWEEN operator", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query.where("age", "BETWEEN", [20, 30]).execute();
+
+      expect(mockPool).toHaveExecutedQueryWithParams(
+        "SELECT * FROM users WHERE age BETWEEN $1 AND $2",
+        [20, 30]
+      );
+    });
+
+    it("should handle BETWEEN operator with qualified columns", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query
+        .innerJoin("posts", "users.id", "posts.user_id")
+        .where("users.age", "BETWEEN", [20, 30])
+        .execute();
+
+      expect(mockPool).toHaveExecutedQueryWithParams(
+        "SELECT * FROM users INNER JOIN posts ON users.id = posts.user_id WHERE users.age BETWEEN $1 AND $2",
+        [20, 30]
+      );
+    });
+
+    it("should handle BETWEEN operator with multiple conditions", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query
+        .where("age", "BETWEEN", [20, 30])
+        .where("salary", "BETWEEN", [50000, 100000])
+        .execute();
+
+      expect(mockPool).toHaveExecutedQueryWithParams(
+        "SELECT * FROM users WHERE age BETWEEN $1 AND $2 AND salary BETWEEN $3 AND $4",
+        [20, 30, 50000, 100000]
+      );
+    });
+
     it("should handle IN operator with arrays", async () => {
       mockPool.setMockResults([]);
 
