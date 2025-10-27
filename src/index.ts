@@ -1347,8 +1347,20 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
   ): Promise<Schema[T][]> {
     if (data.length === 0) return [];
 
-    // Insert all data at once for better efficiency
-    return this.insert(table, data);
+    // If data fits in a single chunk, insert all at once
+    if (data.length <= chunkSize) {
+      return this.insert(table, data);
+    }
+
+    // Split data into chunks and insert each chunk
+    const results: Schema[T][] = [];
+    for (let i = 0; i < data.length; i += chunkSize) {
+      const chunk = data.slice(i, i + chunkSize);
+      const chunkResults = await this.insert(table, chunk);
+      results.push(...chunkResults);
+    }
+
+    return results;
   }
 
   /**

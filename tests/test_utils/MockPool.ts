@@ -3,6 +3,8 @@
  */
 export class MockPool {
   private mockResults: any[] = [];
+  private mockResultsQueue: any[][] = [];
+  private queryIndex: number = 0;
   public queryLog: Array<{ text: string; values: any[] }> = [];
 
   constructor() {}
@@ -10,8 +12,17 @@ export class MockPool {
   /**
    * Set the mock results that will be returned by query() calls
    */
-  setMockResults(results: any[]) {
-    this.mockResults = results;
+  setMockResults(results: any[] | any[][]) {
+    // Check if this is a queue of results (array of arrays) or single result set
+    if (results.length > 0 && Array.isArray(results[0]) && results.every((r: any) => Array.isArray(r))) {
+      this.mockResultsQueue = results as any[][];
+      this.mockResults = [];
+      this.queryIndex = 0;
+    } else {
+      this.mockResults = results;
+      this.mockResultsQueue = [];
+      this.queryIndex = 0;
+    }
   }
 
   /**
@@ -33,6 +44,7 @@ export class MockPool {
    */
   clearQueryLog() {
     this.queryLog = [];
+    this.queryIndex = 0;
   }
 
   /**
@@ -41,6 +53,8 @@ export class MockPool {
   reset() {
     this.queryLog = [];
     this.mockResults = [];
+    this.mockResultsQueue = [];
+    this.queryIndex = 0;
   }
 
   /**
@@ -52,6 +66,14 @@ export class MockPool {
       value instanceof Date ? value.toISOString() : value
     );
     this.queryLog.push({ text, values: normalizedValues });
+
+    // If we have a queue of results, return them sequentially
+    if (this.mockResultsQueue.length > 0) {
+      const result = this.mockResultsQueue[this.queryIndex] || [];
+      this.queryIndex++;
+      return { rows: result as T[] };
+    }
+
     return { rows: this.mockResults as T[] };
   }
 

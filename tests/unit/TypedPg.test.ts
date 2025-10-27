@@ -326,10 +326,19 @@ describe("TypedPg CRUD Operations", () => {
     });
 
     it("should handle batch insert with chunking", async () => {
-      const mockResult = Array(5).fill(null).map((_, i) =>
-        createMockUser({ id: i + 1, name: `User ${i + 1}` })
-      );
-      mockPool.setMockResults(mockResult);
+      // Set up mock results for each chunk
+      const mockChunk1 = [
+        createMockUser({ id: 1, name: "User 1" }),
+        createMockUser({ id: 2, name: "User 2" })
+      ];
+      const mockChunk2 = [
+        createMockUser({ id: 3, name: "User 3" }),
+        createMockUser({ id: 4, name: "User 4" })
+      ];
+      const mockChunk3 = [
+        createMockUser({ id: 5, name: "User 5" })
+      ];
+      mockPool.setMockResults([mockChunk1, mockChunk2, mockChunk3]);
 
       const data = Array(5).fill(null).map((_, i) => ({
         name: `User ${i + 1}`,
@@ -338,8 +347,15 @@ describe("TypedPg CRUD Operations", () => {
 
       const result = await db.batchInsert("users", data, 2);
 
-      expect(mockPool.getQueryLog()).toHaveLength(1); // Single INSERT with multiple VALUES
+      // With chunk size 2, should split 5 records into 3 queries: 2 + 2 + 1
+      expect(mockPool.getQueryLog()).toHaveLength(3);
       expect(result).toHaveLength(5);
+
+      // Verify chunk sizes
+      const queries = mockPool.getQueryLog();
+      expect(queries[0].values).toHaveLength(4); // 2 records * 2 columns
+      expect(queries[1].values).toHaveLength(4); // 2 records * 2 columns
+      expect(queries[2].values).toHaveLength(2); // 1 record * 2 columns
     });
 
     it("should handle batch update with multiple conditions", async () => {
