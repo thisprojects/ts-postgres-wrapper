@@ -1225,7 +1225,7 @@ describe("TypedQuery", () => {
       const result = await query.min("age").execute();
 
       expect(mockPool).toHaveExecutedQuery(
-        "SELECT MIN(age) as min FROM users"
+        "SELECT MIN(age) AS min FROM users"
       );
       expect(result[0].min).toBe(10);
     });
@@ -1240,7 +1240,7 @@ describe("TypedQuery", () => {
       const result = await query.max("age").execute();
 
       expect(mockPool).toHaveExecutedQuery(
-        "SELECT MAX(age) as max FROM users"
+        "SELECT MAX(age) AS max FROM users"
       );
       expect(result[0].max).toBe(50);
     });
@@ -1255,7 +1255,7 @@ describe("TypedQuery", () => {
       const result = await query.sum("age").execute();
 
       expect(mockPool).toHaveExecutedQuery(
-        "SELECT SUM(age) as sum FROM users"
+        "SELECT SUM(age) AS sum FROM users"
       );
       expect(result[0].sum).toBe(1000);
     });
@@ -1270,7 +1270,7 @@ describe("TypedQuery", () => {
       const result = await query.avg("age").execute();
 
       expect(mockPool).toHaveExecutedQuery(
-        "SELECT AVG(age) as avg FROM users"
+        "SELECT AVG(age) AS avg FROM users"
       );
       expect(result[0].avg).toBe(25.5);
     });
@@ -1288,7 +1288,7 @@ describe("TypedQuery", () => {
         .execute();
 
       expect(mockPool).toHaveExecutedQueryWithParams(
-        "SELECT MIN(age) as min FROM users WHERE active = $1",
+        "SELECT MIN(age) AS min FROM users WHERE active = $1",
         [true]
       );
     });
@@ -1306,7 +1306,7 @@ describe("TypedQuery", () => {
         .execute();
 
       expect(mockPool).toHaveExecutedQuery(
-        "SELECT MIN(age) as min FROM users GROUP BY department"
+        "SELECT MIN(age) AS min FROM users GROUP BY department"
       );
     });
 
@@ -1323,7 +1323,7 @@ describe("TypedQuery", () => {
         .execute();
 
       expect(mockPool).toHaveExecutedQuery(
-        "SELECT MAX(posts.likes) as max FROM users INNER JOIN posts ON users.id = posts.user_id"
+        "SELECT MAX(posts.likes) AS max FROM users INNER JOIN posts ON users.id = posts.user_id"
       );
     });
 

@@ -6,6 +6,35 @@ import { Pool } from "pg";
 type ColumnNames<T> = keyof T & string;
 
 /**
+ * Column alias configuration
+ */
+type ColumnAlias<T, K extends keyof T = keyof T> = {
+  column: K;
+  as: string;
+};
+
+/**
+ * Column specification that allows both simple column names and complex expressions
+ */
+type ColumnSpec<T> = keyof T | string | ColumnAlias<T, keyof T> | { column: string; as: string };
+
+/**
+ * Extract the result type from a mix of column names and aliases
+ */
+type ResultColumns<T, S extends ColumnSpec<T>[]> = {
+  [K in S[number] as
+    K extends { as: infer A } ? A :
+    K extends keyof T ? K :
+    K extends string ? K :
+    never
+  ]:
+    K extends { column: keyof T } ? T[K['column']] :
+    K extends { column: string, as: infer A } ? A extends keyof T ? T[A] : any :
+    K extends keyof T ? T[K] :
+    any
+};
+
+/**
  * Pick specific columns from a table
  */
 type SelectColumns<T, K extends keyof T & string> = Pick<T, K>;
@@ -123,15 +152,21 @@ export class TypedQuery<
   }
 
   /**
-   * Select specific columns (type-safe for known schemas, string-based for flexibility)
+   * Select specific columns with optional aliases (type-safe for known schemas)
    */
-  select<K extends keyof Row & string>(
-    ...columns: K[]
-  ): TypedQuery<TableName, SelectColumns<Row, K>, Schema>;
-  select(...columns: string[]): TypedQuery<TableName, any, Schema>;
-  select(...columns: any[]): TypedQuery<TableName, any, Schema> {
+  select<S extends ColumnSpec<Row>[]>(
+    ...columns: S
+  ): TypedQuery<TableName, ResultColumns<Row, S>, Schema>;
+  select(...columns: (string | ColumnAlias<Row> | { column: string; as: string })[]): TypedQuery<TableName, any, Schema> {
     const newQuery = this.clone<any>();
-    newQuery.selectedColumns = columns;
+    newQuery.selectedColumns = columns.map(col => {
+      if (typeof col === 'string') {
+        return this.qualifyColumnName(col);
+      } else {
+        const colExpr = typeof col.column === 'string' ? col.column : this.qualifyColumnName(String(col.column));
+        return `${colExpr} AS ${col.as}`;
+      }
+    });
     return newQuery;
   }
 
@@ -601,7 +636,11 @@ export class TypedQuery<
   min(column: string): TypedQuery<TableName, { min: any }, Schema>;
   min(column: any): TypedQuery<TableName, { min: any }, Schema> {
     const qualifiedColumn = this.qualifyColumnName(String(column));
-    return this.clone<{ min: any }>().select(`MIN(${qualifiedColumn}) as min`);
+    return (this.clone() as TypedQuery<TableName, { min: any }, Schema>)
+      .select({
+        column: `MIN(${qualifiedColumn})`,
+        as: "min"
+      } as const);
   }
 
   /**
@@ -611,7 +650,11 @@ export class TypedQuery<
   max(column: string): TypedQuery<TableName, { max: any }, Schema>;
   max(column: any): TypedQuery<TableName, { max: any }, Schema> {
     const qualifiedColumn = this.qualifyColumnName(String(column));
-    return this.clone<{ max: any }>().select(`MAX(${qualifiedColumn}) as max`);
+    return (this.clone() as TypedQuery<TableName, { max: any }, Schema>)
+      .select({
+        column: `MAX(${qualifiedColumn})`,
+        as: "max"
+      } as const);
   }
 
   /**
@@ -621,7 +664,11 @@ export class TypedQuery<
   sum(column: string): TypedQuery<TableName, { sum: any }, Schema>;
   sum(column: any): TypedQuery<TableName, { sum: any }, Schema> {
     const qualifiedColumn = this.qualifyColumnName(String(column));
-    return this.clone<{ sum: any }>().select(`SUM(${qualifiedColumn}) as sum`);
+    return (this.clone() as TypedQuery<TableName, { sum: any }, Schema>)
+      .select({
+        column: `SUM(${qualifiedColumn})`,
+        as: "sum"
+      } as const);
   }
 
   /**
@@ -631,7 +678,11 @@ export class TypedQuery<
   avg(column: string): TypedQuery<TableName, { avg: number }, Schema>;
   avg(column: any): TypedQuery<TableName, { avg: number }, Schema> {
     const qualifiedColumn = this.qualifyColumnName(String(column));
-    return this.clone<{ avg: number }>().select(`AVG(${qualifiedColumn}) as avg`);
+    return (this.clone() as TypedQuery<TableName, { avg: number }, Schema>)
+      .select({
+        column: `AVG(${qualifiedColumn})`,
+        as: "avg"
+      } as const);
   }
 
   /**
