@@ -71,6 +71,6 @@ describe("createTypedPg Factory Function", () => {
 
     expect(() => {
       createTypedPg({ host: "invalid" });
-    }).toThrow(error);
+    }).toThrow("Failed to create database pool: Invalid config");
   });
 });

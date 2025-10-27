@@ -18,6 +18,69 @@ export interface QueryLogger {
 }
 
 /**
+ * Configuration options for TypedPg
+ */
+export interface TypedPgOptions {
+  logger?: QueryLogger;
+  timeout?: number; // Query timeout in milliseconds
+  retryAttempts?: number; // Number of retry attempts for transient errors
+  retryDelay?: number; // Delay between retries in milliseconds
+  onError?: (error: Error, context: ErrorContext) => void; // Custom error handler
+}
+
+/**
+ * Error context for custom error handlers
+ */
+export interface ErrorContext {
+  query: string;
+  params: any[];
+  attempt?: number;
+  operation?: string;
+}
+
+/**
+ * Custom error class for database errors
+ */
+export class DatabaseError extends Error {
+  constructor(
+    message: string,
+    public readonly code?: string,
+    public readonly context?: ErrorContext,
+    public readonly originalError?: Error
+  ) {
+    super(message);
+    this.name = "DatabaseError";
+    Object.setPrototypeOf(this, DatabaseError.prototype);
+  }
+}
+
+/**
+ * Check if an error is a transient error that can be retried
+ */
+export function isTransientError(error: any): boolean {
+  if (!error) return false;
+
+  // PostgreSQL error codes for transient errors
+  const transientCodes = new Set([
+    '40001', // serialization_failure
+    '40P01', // deadlock_detected
+    '53000', // insufficient_resources
+    '53100', // disk_full
+    '53200', // out_of_memory
+    '53300', // too_many_connections
+    '57P03', // cannot_connect_now
+    '58000', // system_error
+    '58030', // io_error
+    'ECONNRESET', // Connection reset
+    'ETIMEDOUT', // Connection timeout
+    'ENOTFOUND', // DNS lookup failed
+    'ECONNREFUSED', // Connection refused
+  ]);
+
+  return transientCodes.has(error.code);
+}
+
+/**
  * Default console logger
  */
 export class ConsoleLogger implements QueryLogger {
@@ -1372,11 +1435,55 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
   private pool: Pool;
   private schema: Schema;
   private logger?: QueryLogger;
+  private options: TypedPgOptions;
 
-  constructor(pool: Pool, schema?: Schema, logger?: QueryLogger) {
+  constructor(pool: Pool, schema?: Schema, optionsOrLogger?: QueryLogger | TypedPgOptions) {
     this.pool = pool;
     this.schema = schema || ({} as Schema);
-    this.logger = logger;
+
+    // Handle backward compatibility: support both logger and options
+    if (optionsOrLogger && 'log' in optionsOrLogger) {
+      // Old API: logger passed directly
+      this.logger = optionsOrLogger;
+      this.options = {};
+    } else {
+      // New API: options object
+      this.options = optionsOrLogger || {};
+      this.logger = this.options.logger;
+    }
+
+    // Set default options
+    this.options = {
+      timeout: 30000, // 30 seconds default
+      retryAttempts: 0, // No retries by default
+      retryDelay: 1000, // 1 second between retries
+      ...this.options
+    };
+
+    // Set up pool error handler (if pool supports event emitters)
+    if (this.pool.on) {
+      this.pool.on('error', (err) => {
+        const context: ErrorContext = {
+          query: 'pool error',
+          params: [],
+          operation: 'connection'
+        };
+
+        if (this.logger) {
+          this.logger.log('error', {
+            query: 'Pool error',
+            params: [],
+            duration: 0,
+            timestamp: new Date(),
+            error: err
+          });
+        }
+
+        if (this.options.onError) {
+          this.options.onError(err, context);
+        }
+      });
+    }
   }
 
   /**
@@ -1394,41 +1501,127 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
   }
 
   /**
-   * Execute a query with logging
+   * Set options
    */
-  private async executeWithLogging<T = any>(query: string, params: any[]): Promise<{ rows: T[] }> {
-    const startTime = Date.now();
-    const timestamp = new Date();
-
-    try {
-      const result = await this.pool.query(query, params);
-      const duration = Date.now() - startTime;
-
-      if (this.logger) {
-        this.logger.log("debug", {
-          query,
-          params,
-          duration,
-          timestamp
-        });
-      }
-
-      return result as { rows: T[] };
-    } catch (error) {
-      const duration = Date.now() - startTime;
-
-      if (this.logger) {
-        this.logger.log("error", {
-          query,
-          params,
-          duration,
-          timestamp,
-          error: error as Error
-        });
-      }
-
-      throw error;
+  setOptions(options: Partial<TypedPgOptions>): void {
+    this.options = { ...this.options, ...options };
+    if (options.logger !== undefined) {
+      this.logger = options.logger;
     }
+  }
+
+  /**
+   * Get current options
+   */
+  getOptions(): TypedPgOptions {
+    return { ...this.options };
+  }
+
+  /**
+   * Sleep for a given duration
+   */
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Execute a query with logging, timeout, and retry logic
+   */
+  private async executeWithLogging<T = any>(
+    query: string,
+    params: any[],
+    operation: string = 'query'
+  ): Promise<{ rows: T[] }> {
+    const maxAttempts = (this.options.retryAttempts || 0) + 1;
+    let lastError: Error | undefined;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const startTime = Date.now();
+      const timestamp = new Date();
+      const context: ErrorContext = { query, params, attempt, operation };
+
+      try {
+        // Apply query timeout if configured
+        let result: any;
+        if (this.options.timeout && this.options.timeout > 0) {
+          result = await Promise.race([
+            this.pool.query(query, params),
+            new Promise((_, reject) =>
+              setTimeout(
+                () => reject(new DatabaseError('Query timeout exceeded', 'TIMEOUT', context)),
+                this.options.timeout
+              )
+            )
+          ]);
+        } else {
+          result = await this.pool.query(query, params);
+        }
+
+        const duration = Date.now() - startTime;
+
+        if (this.logger) {
+          this.logger.log("debug", {
+            query,
+            params,
+            duration,
+            timestamp
+          });
+        }
+
+        return result as { rows: T[] };
+      } catch (error) {
+        const duration = Date.now() - startTime;
+        lastError = error as Error;
+
+        if (this.logger) {
+          this.logger.log("error", {
+            query,
+            params,
+            duration,
+            timestamp,
+            error: lastError
+          });
+        }
+
+        // Check if we should retry
+        const shouldRetry = attempt < maxAttempts && isTransientError(error);
+
+        if (shouldRetry) {
+          if (this.logger) {
+            this.logger.log("warn", {
+              query: `Retrying query (attempt ${attempt}/${maxAttempts})`,
+              params: [],
+              duration: 0,
+              timestamp: new Date()
+            });
+          }
+
+          // Wait before retrying
+          await this.sleep(this.options.retryDelay || 1000);
+          continue;
+        }
+
+        // Call custom error handler
+        if (this.options.onError) {
+          this.options.onError(lastError, context);
+        }
+
+        // Wrap error in DatabaseError if not already
+        if (!(error instanceof DatabaseError)) {
+          throw new DatabaseError(
+            lastError.message,
+            (error as any).code,
+            context,
+            lastError
+          );
+        }
+
+        throw error;
+      }
+    }
+
+    // This should never be reached, but TypeScript doesn't know that
+    throw lastError || new DatabaseError('Query failed', undefined, { query, params, operation });
   }
 
   /**
@@ -1825,20 +2018,97 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
 /**
  * Create a typed wrapper around a pg Pool
  * Can be used with or without a schema type
+ *
+ * @param poolOrConfig - Pool instance, connection string, or Pool config object
+ * @param schema - Optional schema definition for type safety
+ * @param optionsOrLogger - Options object or legacy logger (for backward compatibility)
+ *
+ * @example
+ * // With connection string
+ * const db = createTypedPg<MySchema>('postgresql://localhost/mydb');
+ *
+ * @example
+ * // With options
+ * const db = createTypedPg<MySchema>('postgresql://localhost/mydb', schema, {
+ *   logger: new ConsoleLogger('debug'),
+ *   timeout: 5000,
+ *   retryAttempts: 3,
+ *   onError: (err, ctx) => console.error('DB Error:', err)
+ * });
  */
 export function createTypedPg<
   Schema extends Record<string, any> = Record<string, any>
->(poolOrConfig: Pool | string | object, schema?: Schema, logger?: QueryLogger): TypedPg<Schema> {
-  const pool =
-    poolOrConfig instanceof Pool
-      ? poolOrConfig
-      : new Pool(
-          typeof poolOrConfig === "string"
-            ? { connectionString: poolOrConfig }
-            : poolOrConfig
-        );
+>(
+  poolOrConfig: Pool | string | object,
+  schema?: Schema,
+  optionsOrLogger?: QueryLogger | TypedPgOptions
+): TypedPg<Schema> {
+  let pool: Pool;
 
-  return new TypedPg<Schema>(pool, schema, logger);
+  try {
+    pool =
+      poolOrConfig instanceof Pool
+        ? poolOrConfig
+        : new Pool(
+            typeof poolOrConfig === "string"
+              ? { connectionString: poolOrConfig }
+              : poolOrConfig
+          );
+
+    // Test connection if it's a new pool
+    if (!(poolOrConfig instanceof Pool)) {
+      // Set up connection error handling
+      if (pool.on) {
+        pool.on('error', (err) => {
+          // Error will be handled by TypedPg instance
+          // This is just to prevent unhandled promise rejections
+        });
+      }
+
+      // Try to connect to validate configuration (optional, for real pools)
+      if (pool.connect) {
+        const connectPromise = pool.connect();
+        if (connectPromise && connectPromise.then) {
+          connectPromise
+            .then(client => {
+              if (client && client.release) {
+                client.release();
+              }
+            })
+            .catch(err => {
+              const options = (optionsOrLogger && 'log' in optionsOrLogger) ? {} : (optionsOrLogger || {});
+              if (options.onError) {
+                options.onError(err, {
+                  query: 'connection test',
+                  params: [],
+                  operation: 'connect'
+                });
+              }
+              // Don't throw here - let queries fail naturally with proper error handling
+            });
+        }
+      }
+    }
+
+    return new TypedPg<Schema>(pool, schema, optionsOrLogger);
+  } catch (error) {
+    const options = (optionsOrLogger && 'log' in optionsOrLogger) ? {} : (optionsOrLogger || {});
+
+    if (options.onError) {
+      options.onError(error as Error, {
+        query: 'pool creation',
+        params: [],
+        operation: 'init'
+      });
+    }
+
+    throw new DatabaseError(
+      `Failed to create database pool: ${(error as Error).message}`,
+      (error as any).code,
+      { query: 'pool creation', params: [], operation: 'init' },
+      error as Error
+    );
+  }
 }
 
 // Re-export Pool type for convenience

@@ -6,8 +6,46 @@ export class MockPool {
   private mockResultsQueue: any[][] = [];
   private queryIndex: number = 0;
   public queryLog: Array<{ text: string; values: any[] }> = [];
+  private eventListeners: Map<string, Function[]> = new Map();
 
   constructor() {}
+
+  /**
+   * Mock implementation of EventEmitter.on()
+   */
+  on(event: string, listener: Function): this {
+    if (!this.eventListeners.has(event)) {
+      this.eventListeners.set(event, []);
+    }
+    this.eventListeners.get(event)!.push(listener);
+    return this;
+  }
+
+  /**
+   * Mock implementation of EventEmitter.emit()
+   */
+  emit(event: string, ...args: any[]): boolean {
+    const listeners = this.eventListeners.get(event);
+    if (!listeners || listeners.length === 0) {
+      return false;
+    }
+    listeners.forEach(listener => listener(...args));
+    return true;
+  }
+
+  /**
+   * Mock implementation of EventEmitter.removeListener()
+   */
+  removeListener(event: string, listener: Function): this {
+    const listeners = this.eventListeners.get(event);
+    if (listeners) {
+      const index = listeners.indexOf(listener);
+      if (index > -1) {
+        listeners.splice(index, 1);
+      }
+    }
+    return this;
+  }
 
   /**
    * Set the mock results that will be returned by query() calls
