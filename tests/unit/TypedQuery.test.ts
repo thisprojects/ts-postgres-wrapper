@@ -1503,6 +1503,116 @@ describe("TypedQuery", () => {
     });
   });
 
+  describe("DISTINCT queries", () => {
+    it("should handle basic DISTINCT query", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query.distinct().execute();
+
+      expect(mockPool).toHaveExecutedQuery(
+        "SELECT DISTINCT * FROM users"
+      );
+    });
+
+    it("should handle DISTINCT with selected columns", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query
+        .select("department", "role")
+        .distinct()
+        .execute();
+
+      expect(mockPool).toHaveExecutedQuery(
+        "SELECT DISTINCT department, role FROM users"
+      );
+    });
+
+    it("should handle DISTINCT with WHERE clause", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query
+        .select("department")
+        .distinct()
+        .where("active", "=", true)
+        .execute();
+
+      expect(mockPool).toHaveExecutedQueryWithParams(
+        "SELECT DISTINCT department FROM users WHERE active = $1",
+        [true]
+      );
+    });
+
+    it("should handle DISTINCT with ORDER BY", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query
+        .select("department")
+        .distinct()
+        .orderBy("department", "ASC")
+        .execute();
+
+      expect(mockPool).toHaveExecutedQuery(
+        "SELECT DISTINCT department FROM users ORDER BY department ASC"
+      );
+    });
+
+    it("should handle DISTINCT with JOINs", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query
+        .select("users.department", "posts.title")
+        .distinct()
+        .innerJoin("posts", "users.id", "posts.user_id")
+        .execute();
+
+      expect(mockPool).toHaveExecutedQuery(
+        "SELECT DISTINCT users.department, posts.title FROM users INNER JOIN posts ON users.id = posts.user_id"
+      );
+    });
+
+    it("should handle DISTINCT with complex query", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+      await query
+        .select("users.department", "posts.title")
+        .distinct()
+        .innerJoin("posts", "users.id", "posts.user_id")
+        .where("users.active", "=", true)
+        .orderBy("users.department", "ASC")
+        .limit(10)
+        .execute();
+
+      expect(mockPool).toHaveExecutedQueryWithParams(
+        "SELECT DISTINCT users.department, posts.title FROM users INNER JOIN posts ON users.id = posts.user_id WHERE users.active = $1 ORDER BY users.department ASC LIMIT 10",
+        [true]
+      );
+    });
+  });
+
   describe("Complex query combinations", () => {
     it("should handle complex query with all clauses", async () => {
       mockPool.setMockResults([]);

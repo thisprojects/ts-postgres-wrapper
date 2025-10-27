@@ -46,6 +46,7 @@ export class TypedQuery<
   private havingClause: string = "";
   private havingParams: any[] = [];
   private windowFunctions: string[] = [];
+  private isDistinct: boolean = false;
 
   constructor(
     pool: Pool,
@@ -87,7 +88,16 @@ export class TypedQuery<
     newQuery.havingClause = this.havingClause;
     newQuery.havingParams = [...this.havingParams];
     newQuery.windowFunctions = [...this.windowFunctions];
+    newQuery.isDistinct = this.isDistinct;
     return newQuery;
+  }
+
+  /**
+   * Enable DISTINCT for this query
+   */
+  distinct(): this {
+    this.isDistinct = true;
+    return this;
   }
 
   /**
@@ -395,7 +405,7 @@ export class TypedQuery<
       columns += `, ${this.windowFunctions.map((w, i) => `${w} as window_${i + 1}`).join(", ")}`;
     }
 
-    const query = `SELECT ${columns} ${this.buildFromClause()}${
+    const query = `SELECT ${this.isDistinct ? 'DISTINCT ' : ''}${columns} ${this.buildFromClause()}${
       this.whereClause
     }${this.groupByColumns.length ? ` GROUP BY ${this.groupByColumns.join(", ")}` : ""}${
       this.havingClause
@@ -545,7 +555,7 @@ export class TypedQuery<
       ? this.selectedColumns.join(", ")
       : "*";
 
-    const query = `SELECT ${columns} ${this.buildFromClause()}${
+    const query = `SELECT ${this.isDistinct ? 'DISTINCT ' : ''}${columns} ${this.buildFromClause()}${
       this.whereClause
     }${this.groupByColumns.length ? ` GROUP BY ${this.groupByColumns.join(", ")}` : ""}${
       this.havingClause
