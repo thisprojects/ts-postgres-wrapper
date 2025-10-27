@@ -77,7 +77,7 @@ type JSONValue = Record<string, any> | any[] | string | number | boolean | null;
 type ColumnNames<T> = keyof T & string;
 
 /**
- * Column alias configuration
+ * Column alias configuration (strongly typed)
  */
 type ColumnAlias<T, K extends keyof T = keyof T> = {
   column: K;
@@ -85,24 +85,63 @@ type ColumnAlias<T, K extends keyof T = keyof T> = {
 };
 
 /**
+ * Expression alias for aggregate functions, calculations, etc.
+ * These expressions return 'any' type since we can't infer their result type
+ */
+type ExpressionAlias = {
+  column: string;
+  as: string;
+};
+
+/**
  * Column specification that allows both simple column names and complex expressions
  */
-type ColumnSpec<T> = keyof T | string | ColumnAlias<T, keyof T> | { column: string; as: string };
+type ColumnSpec<T> = keyof T | string | ColumnAlias<T, keyof T> | ExpressionAlias;
+
+/**
+ * Helper type to distinguish between typed column aliases and expression aliases
+ */
+type IsTypedAlias<T, A> = A extends { column: keyof T } ? true : false;
+
+/**
+ * Helper functions for creating typed column specifications
+ * These provide better type inference when used with select()
+ */
+
+/**
+ * Create a typed column alias
+ * Usage: select(col("firstName", "name"), col("lastName", "surname"))
+ */
+export function col<T, K extends keyof T>(column: K, as: string): ColumnAlias<T, K> {
+  return { column, as };
+}
+
+/**
+ * Create an expression alias for aggregate functions or calculations
+ * Usage: select(expr("COUNT(*)", "total"), expr("AVG(age)", "averageAge"))
+ */
+export function expr(expression: string, as: string): ExpressionAlias {
+  return { column: expression, as };
+}
 
 /**
  * Extract the result type from a mix of column names and aliases
+ * Improved to better handle string expressions while maintaining type safety
  */
 type ResultColumns<T, S extends ColumnSpec<T>[]> = {
   [K in S[number] as
-    K extends { as: infer A } ? A :
+    K extends { as: infer A extends string } ? A :
     K extends keyof T ? K :
     K extends string ? K :
     never
   ]:
-    K extends { column: keyof T } ? T[K['column']] :
-    K extends { column: string, as: infer A } ? A extends keyof T ? T[A] : any :
+    K extends { column: infer C } ?
+      C extends keyof T ? T[C] :
+      C extends string ? any :
+      never :
     K extends keyof T ? T[K] :
-    any
+    K extends string ? any :
+    never
 };
 
 /**
@@ -228,11 +267,16 @@ export class TypedQuery<
 
   /**
    * Select specific columns with optional aliases (type-safe for known schemas)
+   *
+   * Supports three forms:
+   * 1. Column names from schema: .select("id", "name")
+   * 2. Aliased columns (typed): .select({ column: "firstName" as keyof Row, as: "name" })
+   * 3. String expressions: .select("COUNT(*)", "MAX(age)") - returns any for these fields
    */
   select<S extends ColumnSpec<Row>[]>(
     ...columns: S
   ): TypedQuery<TableName, ResultColumns<Row, S>, Schema>;
-  select(...columns: (string | ColumnAlias<Row> | { column: string; as: string })[]): TypedQuery<TableName, any, Schema> {
+  select(...columns: (string | ColumnAlias<Row> | { column: string; as: string })[]): TypedQuery<TableName, Record<string, any>, Schema> {
     const newQuery = this.clone<any>();
     newQuery.selectedColumns = columns.map(col => {
       if (typeof col === 'string') {
