@@ -661,7 +661,7 @@ describe("TypedQuery", () => {
           "users"
         );
         await query
-          .select("users.id", "users.name", "mgr.name AS manager_name")
+          .select("users.id", "users.name", { column: "mgr.name", as: "manager_name" })
           .innerJoin("users", "users.manager_id", "mgr.id", "mgr")
           .where("users.department", "=", "Engineering")
           .orderBy("users.name")
@@ -681,7 +681,7 @@ describe("TypedQuery", () => {
           "users"
         );
         await query
-          .select("users.name", "mgr.name AS manager_name", "dir.name AS director_name")
+          .select("users.name", { column: "mgr.name", as: "manager_name" }, { column: "dir.name", as: "director_name" })
           .innerJoin("users", "users.manager_id", "mgr.id", "mgr")
           .innerJoin("users", "mgr.manager_id", "dir.id", "dir")
           .execute();

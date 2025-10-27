@@ -236,19 +236,12 @@ export class TypedQuery<
     const newQuery = this.clone<any>();
     newQuery.selectedColumns = columns.map(col => {
       if (typeof col === 'string') {
-        // Check if this is a raw expression with AS clause (e.g., "column AS alias")
-        // Allow this pattern to pass through for backward compatibility
-        if (/ as /i.test(col)) {
-          const parts = col.split(/ as /i);
-          if (parts.length === 2) {
-            const colPart = parts[0].trim();
-            const aliasPart = parts[1].trim();
-            return `${this.qualifyColumnName(colPart)} AS ${this.sanitizeIdentifier(aliasPart)}`;
-          }
-        }
+        // String columns are treated as simple column names - no "AS" parsing
+        // To use aliases, use the object syntax: { column: "name", as: "alias" }
         return this.qualifyColumnName(col);
       } else {
-        const colExpr = typeof col.column === 'string' ? col.column : this.qualifyColumnName(String(col.column));
+        // Always sanitize column names, even in object syntax
+        const colExpr = this.qualifyColumnName(String(col.column));
         return `${colExpr} AS ${this.sanitizeIdentifier(col.as)}`;
       }
     });
@@ -813,7 +806,12 @@ export class TypedQuery<
         // Looks like table.column - sanitize as qualified name
         return this.sanitizeIdentifier(column);
       } else {
-        // Has dot but doesn't look like qualified name - treat as single identifier that needs quoting
+        // Has dot but doesn't look like qualified name
+        // Still need to check for SQL injection before quoting
+        if (/[;'"\\]|--|\*\/|\/\*/.test(column)) {
+          throw new Error(`Invalid SQL identifier: ${column}`);
+        }
+        // Treat as single identifier that needs quoting
         return `"${column.replace(/"/g, '""')}"`;
       }
     }

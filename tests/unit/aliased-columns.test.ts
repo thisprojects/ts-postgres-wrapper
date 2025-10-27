@@ -95,7 +95,7 @@ describe("Column Aliases", () => {
         .execute();
 
       expect(pool).toHaveExecutedQuery(
-        "SELECT users.id, firstName AS name, posts.title AS articleTitle " +
+        "SELECT users.id, users.firstName AS name, posts.title AS articleTitle " +
         "FROM users INNER JOIN posts ON users.id = posts.userId"
       );
     });
