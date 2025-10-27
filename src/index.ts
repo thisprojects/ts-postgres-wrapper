@@ -187,10 +187,20 @@ export class TypedQuery<
     const newQuery = this.clone<any>();
     newQuery.selectedColumns = columns.map(col => {
       if (typeof col === 'string') {
+        // Check if this is a raw expression with AS clause (e.g., "column AS alias")
+        // Allow this pattern to pass through for backward compatibility
+        if (/ as /i.test(col)) {
+          const parts = col.split(/ as /i);
+          if (parts.length === 2) {
+            const colPart = parts[0].trim();
+            const aliasPart = parts[1].trim();
+            return `${this.qualifyColumnName(colPart)} AS ${this.sanitizeIdentifier(aliasPart)}`;
+          }
+        }
         return this.qualifyColumnName(col);
       } else {
         const colExpr = typeof col.column === 'string' ? col.column : this.qualifyColumnName(String(col.column));
-        return `${colExpr} AS ${col.as}`;
+        return `${colExpr} AS ${this.sanitizeIdentifier(col.as)}`;
       }
     });
     return newQuery;
@@ -569,24 +579,31 @@ export class TypedQuery<
   }
 
   /**
+   * Escape single quotes in SQL strings
+   */
+  private escapeSingleQuotes(value: string): string {
+    return value.replace(/'/g, "''");
+  }
+
+  /**
    * Get JSON object field
    */
   jsonField<T extends Record<string, any>>(column: string, field: keyof T): string {
-    return `${this.qualifyColumnName(column)}->'${String(field)}'`;
+    return `${this.qualifyColumnName(column)}->'${this.escapeSingleQuotes(String(field))}'`;
   }
 
   /**
    * Get JSON object field as text
    */
   jsonFieldAsText<T extends Record<string, any>>(column: string, field: keyof T): string {
-    return `${this.qualifyColumnName(column)}->>'${String(field)}'`;
+    return `${this.qualifyColumnName(column)}->>'${this.escapeSingleQuotes(String(field))}'`;
   }
 
   /**
    * Get JSON object at path
    */
   jsonPath(column: string, path: string[]): string {
-    const pathStr = path.map(p => `'${p}'`).join(",");
+    const pathStr = path.map(p => `'${this.escapeSingleQuotes(p)}'`).join(",");
     return `${this.qualifyColumnName(column)}#>ARRAY[${pathStr}]`;
   }
 
@@ -594,7 +611,7 @@ export class TypedQuery<
    * Get JSON object at path as text
    */
   jsonPathAsText(column: string, path: string[]): string {
-    const pathStr = path.map(p => `'${p}'`).join(",");
+    const pathStr = path.map(p => `'${this.escapeSingleQuotes(p)}'`).join(",");
     return `${this.qualifyColumnName(column)}#>>ARRAY[${pathStr}]`;
   }
 
@@ -602,7 +619,7 @@ export class TypedQuery<
    * Check if JSON object exists at path
    */
   hasJsonPath(column: string, path: string[]): this {
-    const pathStr = path.map(p => `'${p}'`).join(",");
+    const pathStr = path.map(p => `'${this.escapeSingleQuotes(p)}'`).join(",");
     return this.where(`${this.qualifyColumnName(column)}#>ARRAY[${pathStr}]`, "IS NOT NULL", null);
   }
 
@@ -696,22 +713,70 @@ export class TypedQuery<
   }
 
   /**
+   * Sanitize SQL identifier to prevent injection
+   */
+  private sanitizeIdentifier(identifier: string, allowComplexExpressions: boolean = false): string {
+    // If complex expressions are allowed (like JSON operators or aggregate functions), skip sanitization
+    // This is used when the column is already a validated expression like data->>'field'
+    if (allowComplexExpressions && !/^[a-zA-Z_][a-zA-Z0-9_.]*$/.test(identifier)) {
+      return identifier;
+    }
+
+    // Allow subqueries (starting with parenthesis) - used for JOIN subqueries
+    if (identifier.trim().startsWith('(')) {
+      return identifier;
+    }
+
+    // Standard SQL identifiers: alphanumeric and underscore, starting with letter or underscore
+    // This pattern also allows dots for qualified names (table.column)
+    if (/^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*$/.test(identifier)) {
+      // Return unquoted for backward compatibility (valid identifiers are safe)
+      return identifier;
+    }
+
+    // For special characters, check for SQL injection patterns before quoting
+    // Block obvious SQL injection attempts (semicolons, comments, etc)
+    if (/[;'"\\]|--|\*\/|\/\*/.test(identifier)) {
+      throw new Error(`Invalid SQL identifier: ${identifier}`);
+    }
+
+    // Quote the identifier and escape internal double quotes
+    return `"${identifier.replace(/"/g, '""')}"`;
+  }
+
+  /**
    * Qualify column name if needed
    */
   private qualifyColumnName(column: string): string {
-    // If column is already qualified (contains a dot), return as-is
+    // Check if this is a complex expression (like JSON operators or aggregate functions)
+    const isComplexExpression = /[@?#()\[\]>]|->/.test(column);
+
+    if (isComplexExpression) {
+      // For complex expressions, return as-is (already built by helper methods)
+      return this.sanitizeIdentifier(column, true);
+    }
+
+    // If column contains a dot, check if it looks like a qualified name (table.column)
+    // Qualified names have the pattern: valid_identifier.valid_identifier
     if (column.includes(".")) {
-      return column;
+      const qualifiedPattern = /^[a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*$/;
+      if (qualifiedPattern.test(column)) {
+        // Looks like table.column - sanitize as qualified name
+        return this.sanitizeIdentifier(column);
+      } else {
+        // Has dot but doesn't look like qualified name - treat as single identifier that needs quoting
+        return `"${column.replace(/"/g, '""')}"`;
+      }
     }
 
     // Only qualify columns when we have JOINs (to avoid ambiguity)
     // For single table queries, use unqualified names for backward compatibility
     if (this.joins.length === 0) {
-      return column;
+      return this.sanitizeIdentifier(column);
     }
 
     // For queries with JOINs, qualify with main table reference to avoid ambiguity
-    return `${this.getTableReference()}.${column}`;
+    return `${this.sanitizeIdentifier(this.getTableReference())}.${this.sanitizeIdentifier(column)}`;
   }
 
   /**
@@ -725,18 +790,18 @@ export class TypedQuery<
    * Build the FROM clause with joins
    */
   private buildFromClause(): string {
-    let fromClause = `FROM ${String(this.tableName)}`;
+    let fromClause = `FROM ${this.sanitizeIdentifier(String(this.tableName))}`;
     if (this.tableAlias) {
-      fromClause += ` AS ${this.tableAlias}`;
+      fromClause += ` AS ${this.sanitizeIdentifier(this.tableAlias)}`;
     }
 
     for (const join of this.joins) {
       const joinTableRef = join.alias
-        ? `${join.table} AS ${join.alias}`
-        : join.table;
+        ? `${this.sanitizeIdentifier(join.table)} AS ${this.sanitizeIdentifier(join.alias)}`
+        : this.sanitizeIdentifier(join.table);
 
       const joinConditions = join.conditions
-        .map(cond => `${cond.leftColumn} = ${cond.rightColumn}`)
+        .map(cond => `${this.sanitizeIdentifier(cond.leftColumn)} = ${this.sanitizeIdentifier(cond.rightColumn)}`)
         .join(" AND ");
 
       fromClause += ` ${join.type} JOIN ${joinTableRef} ON ${joinConditions}`;
@@ -858,7 +923,7 @@ export class TypedQuery<
   ): TypedQuery<TableName, T, Schema> {
     const newQuery = this.clone<T>();
     newQuery.selectedColumns = Object.entries(aggregations)
-      .map(([alias, expr]) => `${expr} as ${alias}`);
+      .map(([alias, expr]) => `${expr} AS ${this.sanitizeIdentifier(alias)}`);
     return newQuery;
   }
 

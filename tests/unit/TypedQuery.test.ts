@@ -661,14 +661,14 @@ describe("TypedQuery", () => {
           "users"
         );
         await query
-          .select("users.id", "users.name", "mgr.name as manager_name")
+          .select("users.id", "users.name", "mgr.name AS manager_name")
           .innerJoin("users", "users.manager_id", "mgr.id", "mgr")
           .where("users.department", "=", "Engineering")
           .orderBy("users.name")
           .execute();
 
         expect(mockPool).toHaveExecutedQueryWithParams(
-          "SELECT users.id, users.name, mgr.name as manager_name FROM users INNER JOIN users AS mgr ON users.manager_id = mgr.id WHERE users.department = $1 ORDER BY users.name ASC",
+          "SELECT users.id, users.name, mgr.name AS manager_name FROM users INNER JOIN users AS mgr ON users.manager_id = mgr.id WHERE users.department = $1 ORDER BY users.name ASC",
           ["Engineering"]
         );
       });
@@ -681,13 +681,13 @@ describe("TypedQuery", () => {
           "users"
         );
         await query
-          .select("users.name", "mgr.name as manager_name", "dir.name as director_name")
+          .select("users.name", "mgr.name AS manager_name", "dir.name AS director_name")
           .innerJoin("users", "users.manager_id", "mgr.id", "mgr")
           .innerJoin("users", "mgr.manager_id", "dir.id", "dir")
           .execute();
 
         expect(mockPool).toHaveExecutedQuery(
-          "SELECT users.name, mgr.name as manager_name, dir.name as director_name FROM users INNER JOIN users AS mgr ON users.manager_id = mgr.id INNER JOIN users AS dir ON mgr.manager_id = dir.id"
+          "SELECT users.name, mgr.name AS manager_name, dir.name AS director_name FROM users INNER JOIN users AS mgr ON users.manager_id = mgr.id INNER JOIN users AS dir ON mgr.manager_id = dir.id"
         );
       });
 
@@ -974,13 +974,13 @@ describe("TypedQuery", () => {
           "users.id",
           "users.name",
           "posts.title",
-          "ROW_NUMBER() OVER (PARTITION BY users.id ORDER BY posts.created_at DESC) as post_number"
+          "ROW_NUMBER() OVER (PARTITION BY users.id ORDER BY posts.created_at DESC) AS post_number"
         )
         .innerJoin("posts", "users.id", "posts.user_id")
         .execute();
 
       expect(mockPool).toHaveExecutedQuery(
-        "SELECT users.id, users.name, posts.title, ROW_NUMBER() OVER (PARTITION BY users.id ORDER BY posts.created_at DESC) as post_number FROM users INNER JOIN posts ON users.id = posts.user_id"
+        "SELECT users.id, users.name, posts.title, ROW_NUMBER() OVER (PARTITION BY users.id ORDER BY posts.created_at DESC) AS post_number FROM users INNER JOIN posts ON users.id = posts.user_id"
       );
     });
 
@@ -1016,12 +1016,12 @@ describe("TypedQuery", () => {
         "users"
       );
       await query
-        .select("department", "COUNT(*) as user_count")
+        .select("department", "COUNT(*) AS user_count")
         .groupBy("department")
         .execute();
 
       expect(mockPool).toHaveExecutedQuery(
-        "SELECT department, COUNT(*) as user_count FROM users GROUP BY department"
+        "SELECT department, COUNT(*) AS user_count FROM users GROUP BY department"
       );
     });
 
@@ -1033,13 +1033,13 @@ describe("TypedQuery", () => {
         "users"
       );
       await query
-        .select("department", "COUNT(*) as user_count")
+        .select("department", "COUNT(*) AS user_count")
         .where("active", "=", true)
         .groupBy("department")
         .execute();
 
       expect(mockPool).toHaveExecutedQueryWithParams(
-        "SELECT department, COUNT(*) as user_count FROM users WHERE active = $1 GROUP BY department",
+        "SELECT department, COUNT(*) AS user_count FROM users WHERE active = $1 GROUP BY department",
         [true]
       );
     });
@@ -1052,12 +1052,12 @@ describe("TypedQuery", () => {
         "users"
       );
       await query
-        .select("department", "role", "COUNT(*) as user_count")
+        .select("department", "role", "COUNT(*) AS user_count")
         .groupBy("department", "role")
         .execute();
 
       expect(mockPool).toHaveExecutedQuery(
-        "SELECT department, role, COUNT(*) as user_count FROM users GROUP BY department, role"
+        "SELECT department, role, COUNT(*) AS user_count FROM users GROUP BY department, role"
       );
     });
 
@@ -1069,13 +1069,13 @@ describe("TypedQuery", () => {
         "users"
       );
       await query
-        .select("department", "COUNT(*) as user_count")
+        .select("department", "COUNT(*) AS user_count")
         .groupBy("department")
         .having("COUNT(*)", ">", 5)
         .execute();
 
       expect(mockPool).toHaveExecutedQueryWithParams(
-        "SELECT department, COUNT(*) as user_count FROM users GROUP BY department HAVING COUNT(*) > $1",
+        "SELECT department, COUNT(*) AS user_count FROM users GROUP BY department HAVING COUNT(*) > $1",
         [5]
       );
     });
@@ -1088,14 +1088,14 @@ describe("TypedQuery", () => {
         "users"
       );
       await query
-        .select("department", "COUNT(*) as user_count", "AVG(age) as avg_age")
+        .select("department", "COUNT(*) AS user_count", "AVG(age) AS avg_age")
         .groupBy("department")
         .having("COUNT(*)", ">", 5)
         .having("AVG(age)", ">=", 30)
         .execute();
 
       expect(mockPool).toHaveExecutedQueryWithParams(
-        "SELECT department, COUNT(*) as user_count, AVG(age) as avg_age FROM users GROUP BY department HAVING COUNT(*) > $1 AND AVG(age) >= $2",
+        "SELECT department, COUNT(*) AS user_count, AVG(age) AS avg_age FROM users GROUP BY department HAVING COUNT(*) > $1 AND AVG(age) >= $2",
         [5, 30]
       );
     });
@@ -1108,14 +1108,14 @@ describe("TypedQuery", () => {
         "users"
       );
       await query
-        .select("users.department", "COUNT(DISTINCT posts.id) as post_count")
+        .select("users.department", "COUNT(DISTINCT posts.id) AS post_count")
         .innerJoin("posts", "users.id", "posts.user_id")
         .groupBy("users.department")
         .having("COUNT(DISTINCT posts.id)", ">", 10)
         .execute();
 
       expect(mockPool).toHaveExecutedQueryWithParams(
-        "SELECT users.department, COUNT(DISTINCT posts.id) as post_count FROM users INNER JOIN posts ON users.id = posts.user_id GROUP BY users.department HAVING COUNT(DISTINCT posts.id) > $1",
+        "SELECT users.department, COUNT(DISTINCT posts.id) AS post_count FROM users INNER JOIN posts ON users.id = posts.user_id GROUP BY users.department HAVING COUNT(DISTINCT posts.id) > $1",
         [10]
       );
     });
@@ -1128,13 +1128,13 @@ describe("TypedQuery", () => {
         "users"
       );
       await query
-        .select("department", "COUNT(*) as user_count")
+        .select("department", "COUNT(*) AS user_count")
         .groupBy("department")
         .orderBy("user_count", "DESC")
         .execute();
 
       expect(mockPool).toHaveExecutedQuery(
-        "SELECT department, COUNT(*) as user_count FROM users GROUP BY department ORDER BY user_count DESC"
+        "SELECT department, COUNT(*) AS user_count FROM users GROUP BY department ORDER BY user_count DESC"
       );
     });
 
@@ -1146,14 +1146,14 @@ describe("TypedQuery", () => {
         "users"
       );
       await query
-        .select("department", "COUNT(*) as user_count")
+        .select("department", "COUNT(*) AS user_count")
         .groupBy("department")
         .having("COUNT(*)", ">", 10)
         .orderBy("user_count", "DESC")
         .execute();
 
       expect(mockPool).toHaveExecutedQueryWithParams(
-        "SELECT department, COUNT(*) as user_count FROM users GROUP BY department HAVING COUNT(*) > $1 ORDER BY user_count DESC",
+        "SELECT department, COUNT(*) AS user_count FROM users GROUP BY department HAVING COUNT(*) > $1 ORDER BY user_count DESC",
         [10]
       );
     });
@@ -1166,7 +1166,7 @@ describe("TypedQuery", () => {
         "users"
       );
       await query
-        .select("department", "COUNT(*) as user_count")
+        .select("department", "COUNT(*) AS user_count")
         .groupBy("department")
         .orderBy("user_count", "DESC")
         .limit(5)
@@ -1174,7 +1174,7 @@ describe("TypedQuery", () => {
         .execute();
 
       expect(mockPool).toHaveExecutedQuery(
-        "SELECT department, COUNT(*) as user_count FROM users GROUP BY department ORDER BY user_count DESC LIMIT 5 OFFSET 10"
+        "SELECT department, COUNT(*) AS user_count FROM users GROUP BY department ORDER BY user_count DESC LIMIT 5 OFFSET 10"
       );
     });
 
@@ -1186,13 +1186,13 @@ describe("TypedQuery", () => {
         "users"
       );
       await query
-        .select("department", "COUNT(*) as user_count")
+        .select("department", "COUNT(*) AS user_count")
         .groupBy("department")
         .having("COUNT(*)", "IN", [5, 10, 15])
         .execute();
 
       expect(mockPool).toHaveExecutedQueryWithParams(
-        "SELECT department, COUNT(*) as user_count FROM users GROUP BY department HAVING COUNT(*) IN ($1, $2, $3)",
+        "SELECT department, COUNT(*) AS user_count FROM users GROUP BY department HAVING COUNT(*) IN ($1, $2, $3)",
         [5, 10, 15]
       );
     });
@@ -1207,7 +1207,7 @@ describe("TypedQuery", () => {
 
       await expect(async () => {
         await query
-          .select("department", "COUNT(*) as user_count")
+          .select("department", "COUNT(*) AS user_count")
           .having("COUNT(*)", ">", 5)
           .execute();
       }).rejects.toThrow("HAVING clause requires GROUP BY");
@@ -1347,7 +1347,7 @@ describe("TypedQuery", () => {
       }).execute();
 
       expect(mockPool).toHaveExecutedQuery(
-        "SELECT COUNT(*) as total_users, AVG(age) as avg_age, MIN(age) as min_age, MAX(age) as max_age FROM users"
+        "SELECT COUNT(*) AS total_users, AVG(age) AS avg_age, MIN(age) AS min_age, MAX(age) AS max_age FROM users"
       );
       expect(result[0]).toEqual({
         total_users: "100",
@@ -1380,7 +1380,7 @@ describe("TypedQuery", () => {
         .execute();
 
       expect(mockPool).toHaveExecutedQueryWithParams(
-        "SELECT department as dept, AVG(salary) as avg_salary, COUNT(*) as headcount FROM users GROUP BY department HAVING COUNT(*) > $1 AND AVG(salary) > $2",
+        "SELECT department AS dept, AVG(salary) AS avg_salary, COUNT(*) AS headcount FROM users GROUP BY department HAVING COUNT(*) > $1 AND AVG(salary) > $2",
         [5, 50000]
       );
     });
@@ -1405,7 +1405,7 @@ describe("TypedQuery", () => {
         .execute();
 
       expect(mockPool).toHaveExecutedQuery(
-        "SELECT department as dept, SUM(salary) as total_salary FROM users GROUP BY department ORDER BY total_salary DESC"
+        "SELECT department AS dept, SUM(salary) AS total_salary FROM users GROUP BY department ORDER BY total_salary DESC"
       );
     });
 
@@ -1494,7 +1494,7 @@ describe("TypedQuery", () => {
         .execute();
 
       expect(mockPool).toHaveExecutedQuery(
-        "SELECT department as dept, AVG(EXTRACT(YEAR FROM NOW()) - EXTRACT(YEAR FROM hire_date)) as avg_tenure, COUNT(CASE WHEN role = 'senior' THEN 1 END) as senior_count, VARIANCE(salary) as salary_variance FROM users GROUP BY department"
+        "SELECT department AS dept, AVG(EXTRACT(YEAR FROM NOW()) - EXTRACT(YEAR FROM hire_date)) AS avg_tenure, COUNT(CASE WHEN role = 'senior' THEN 1 END) AS senior_count, VARIANCE(salary) AS salary_variance FROM users GROUP BY department"
       );
     });
   });

@@ -31,16 +31,13 @@ describe("Data Safety", () => {
         "users"
       );
 
-      await query
-        .where("active", "=", true)
-        .orderBy("name; DROP TABLE users; --")
-        .execute();
-
-      // Column names cannot be parameterized, but they are validated by TypeScript
-      // and escaped by the library internally
-      expect(mockPool).toHaveExecutedQuery(
-        'SELECT * FROM users WHERE active = $1 ORDER BY name; DROP TABLE users; -- ASC'
-      );
+      // SQL injection attempts in column names should be rejected
+      await expect(async () => {
+        await query
+          .where("active", "=", true)
+          .orderBy("name; DROP TABLE users; --")
+          .execute();
+      }).rejects.toThrow("Invalid SQL identifier");
     });
 
     it("should safely handle malicious input in SELECT", async () => {
@@ -49,15 +46,12 @@ describe("Data Safety", () => {
         "users"
       );
 
-      await query
-        .select("id", "name; DROP TABLE users; --" as any)
-        .execute();
-
-      // Column names cannot be parameterized, but they are validated by TypeScript
-      // and escaped by the library internally
-      expect(mockPool).toHaveExecutedQuery(
-        'SELECT id, name; DROP TABLE users; -- FROM users'
-      );
+      // SQL injection attempts in column names should be rejected
+      await expect(async () => {
+        await query
+          .select("id", "name; DROP TABLE users; --" as any)
+          .execute();
+      }).rejects.toThrow("Invalid SQL identifier");
     });
 
     it("should safely handle malicious input in IN clause", async () => {
@@ -164,8 +158,10 @@ describe("Data Safety", () => {
         .where("special-name", "=", "test")
         .execute();
 
+      // Note: "weird.column" looks like a qualified name (table.column) so it won't be quoted
+      // In real usage, columns with dots should be avoided or explicitly quoted in the schema
       expect(mockPool).toHaveExecutedQueryWithParams(
-        'SELECT id, special-name, weird.column, 名前 FROM users WHERE special-name = $1',
+        'SELECT id, "special-name", weird.column, "名前" FROM users WHERE "special-name" = $1',
         ["test"]
       );
     });
@@ -185,7 +181,7 @@ describe("Data Safety", () => {
         .execute();
 
       expect(mockPool).toHaveExecutedQuery(
-        'SELECT id, name FROM special-table'
+        'SELECT id, name FROM "special-table"'
       );
     });
   });
