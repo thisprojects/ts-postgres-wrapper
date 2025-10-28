@@ -275,11 +275,36 @@ Add ORDER BY clause. Direction: `"ASC"` (default) or `"DESC"`.
 
 #### `.limit(count)`
 
-Add LIMIT clause.
+Add LIMIT clause. Validates that `count` is a positive integer.
+
+- **Validation**: Must be a positive integer (1 or greater)
+- **Maximum**: 10,000,000 rows (to prevent DoS attacks)
+- **Throws**: Error if value is negative, zero, non-integer, NaN, Infinity, or exceeds maximum
+
+```typescript
+.limit(10)    // ✅ Valid
+.limit(0)     // ❌ Error: must be positive
+.limit(-5)    // ❌ Error: must be positive
+.limit(10.5)  // ❌ Error: must be an integer
+.limit(NaN)   // ❌ Error: must be finite
+```
 
 #### `.offset(count)`
 
-Add OFFSET clause.
+Add OFFSET clause. Validates that `count` is a non-negative integer.
+
+- **Validation**: Must be a non-negative integer (0 or greater)
+- **Maximum**: 100,000,000 rows (to prevent DoS attacks)
+- **Throws**: Error if value is negative, non-integer, NaN, Infinity, or exceeds maximum
+- **Note**: For deep pagination (large offsets), consider cursor-based pagination for better performance
+
+```typescript
+.offset(0)     // ✅ Valid (first page)
+.offset(10)    // ✅ Valid
+.offset(-5)    // ❌ Error: must be non-negative
+.offset(10.5)  // ❌ Error: must be an integer
+.offset(NaN)   // ❌ Error: must be finite
+```
 
 #### `.execute()`
 

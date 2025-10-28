@@ -71,6 +71,12 @@ npm run clean           # Remove dist/ directory
    - WHERE values are not null/undefined
    - SET clause has at least one column (for UPDATE)
 
+6. **Pagination Validation**: LIMIT and OFFSET operations validate that (src/index.ts:816-889):
+   - LIMIT must be a positive integer (>= 1), max 10,000,000
+   - OFFSET must be a non-negative integer (>= 0), max 100,000,000
+   - Both reject NaN, Infinity, non-integers, and values exceeding limits
+   - Prevents SQL errors and DoS attacks from excessive result sets
+
 ### Test Infrastructure
 
 **MockPool (tests/test_utils/MockPool.ts)**

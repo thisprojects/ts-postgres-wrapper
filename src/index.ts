@@ -810,16 +810,80 @@ export class TypedQuery<
 
   /**
    * Add LIMIT clause
+   * @param count - Maximum number of rows to return (must be positive integer)
+   * @throws {Error} If count is not a valid positive integer
    */
   limit(count: number): this {
+    // Validate that count is a finite number
+    if (!Number.isFinite(count)) {
+      throw new Error(
+        `LIMIT value must be a finite number. Got: ${count}`
+      );
+    }
+
+    // Validate that count is an integer
+    if (!Number.isInteger(count)) {
+      throw new Error(
+        `LIMIT value must be an integer. Got: ${count}`
+      );
+    }
+
+    // Validate that count is positive
+    if (count <= 0) {
+      throw new Error(
+        `LIMIT value must be positive. Got: ${count}`
+      );
+    }
+
+    // Validate reasonable upper bound to prevent DoS (10 million rows)
+    const MAX_LIMIT = 10000000;
+    if (count > MAX_LIMIT) {
+      throw new Error(
+        `LIMIT value ${count} exceeds maximum allowed value of ${MAX_LIMIT}. ` +
+        `Large result sets should be paginated using LIMIT and OFFSET.`
+      );
+    }
+
     this.limitClause = ` LIMIT ${count}`;
     return this;
   }
 
   /**
    * Add OFFSET clause
+   * @param count - Number of rows to skip (must be non-negative integer)
+   * @throws {Error} If count is not a valid non-negative integer
    */
   offset(count: number): this {
+    // Validate that count is a finite number
+    if (!Number.isFinite(count)) {
+      throw new Error(
+        `OFFSET value must be a finite number. Got: ${count}`
+      );
+    }
+
+    // Validate that count is an integer
+    if (!Number.isInteger(count)) {
+      throw new Error(
+        `OFFSET value must be an integer. Got: ${count}`
+      );
+    }
+
+    // Validate that count is non-negative
+    if (count < 0) {
+      throw new Error(
+        `OFFSET value must be non-negative. Got: ${count}`
+      );
+    }
+
+    // Validate reasonable upper bound to prevent DoS (100 million rows)
+    const MAX_OFFSET = 100000000;
+    if (count > MAX_OFFSET) {
+      throw new Error(
+        `OFFSET value ${count} exceeds maximum allowed value of ${MAX_OFFSET}. ` +
+        `For deep pagination, consider using cursor-based pagination instead.`
+      );
+    }
+
     this.offsetClause = ` OFFSET ${count}`;
     return this;
   }
