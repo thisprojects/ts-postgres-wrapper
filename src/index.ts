@@ -97,44 +97,79 @@ export function isTransientError(error: any): boolean {
 /**
  * Strip SQL comments from a query string
  * Removes both line comments (--) and block comments
+ * Properly handles PostgreSQL string literals with escaped quotes
  */
 export function stripSqlComments(sql: string): string {
-  // Remove block comments /* ... */
-  let result = sql.replace(/\/\*[\s\S]*?\*\//g, '');
+  let result = '';
+  let inString = false;
+  let stringChar = '';
+  let inBlockComment = false;
 
-  // Remove line comments -- ...
-  // But preserve -- in string literals
-  const lines = result.split('\n');
-  result = lines.map(line => {
-    let inString = false;
-    let stringChar = '';
-    let newLine = '';
+  for (let i = 0; i < sql.length; i++) {
+    const char = sql[i];
+    const next = sql[i + 1];
+    const prev = sql[i - 1];
 
-    for (let i = 0; i < line.length; i++) {
-      const char = line[i];
-      const next = line[i + 1];
-
-      // Handle string literals
-      if ((char === "'" || char === '"') && (i === 0 || line[i - 1] !== '\\')) {
-        if (!inString) {
-          inString = true;
-          stringChar = char;
-        } else if (char === stringChar) {
-          inString = false;
-          stringChar = '';
-        }
-      }
-
-      // Check for line comment outside of strings
-      if (!inString && char === '-' && next === '-') {
-        break; // Rest of line is a comment
-      }
-
-      newLine += char;
+    // Handle block comments /* ... */
+    if (!inString && !inBlockComment && char === '/' && next === '*') {
+      inBlockComment = true;
+      i++; // Skip the *
+      continue;
     }
 
-    return newLine;
-  }).join('\n');
+    if (inBlockComment) {
+      if (char === '*' && next === '/') {
+        inBlockComment = false;
+        i++; // Skip the /
+      }
+      continue; // Skip all characters inside block comment
+    }
+
+    // Handle string literals (single and double quotes)
+    if (char === "'" || char === '"') {
+      if (!inString) {
+        // Starting a string literal
+        inString = true;
+        stringChar = char;
+        result += char;
+      } else if (char === stringChar) {
+        // Could be end of string or escaped quote
+        if (next === stringChar) {
+          // PostgreSQL escaped quote: '' or ""
+          result += char;
+          result += next;
+          i++; // Skip the next quote
+        } else {
+          // End of string literal
+          inString = false;
+          stringChar = '';
+          result += char;
+        }
+      } else {
+        // Different quote character inside string
+        result += char;
+      }
+      continue;
+    }
+
+    // Handle line comments -- ...
+    if (!inString && char === '-' && next === '-') {
+      // Skip until end of line
+      while (i < sql.length && sql[i] !== '\n') {
+        i++;
+      }
+      // Include the newline if present
+      if (i < sql.length && sql[i] === '\n') {
+        result += '\n';
+      }
+      continue;
+    }
+
+    // Regular character
+    if (!inBlockComment) {
+      result += char;
+    }
+  }
 
   return result.trim();
 }
@@ -225,6 +260,69 @@ export class ConsoleLogger implements QueryLogger {
       console.log(message);
     }
   }
+}
+
+/**
+ * PostgreSQL reserved keywords that must be quoted
+ */
+const RESERVED_KEYWORDS = new Set([
+  'select', 'from', 'where', 'insert', 'update', 'delete', 'drop', 'table', 'create',
+  'alter', 'join', 'inner', 'outer', 'left', 'right', 'full', 'cross', 'on', 'using',
+  'and', 'or', 'not', 'in', 'is', 'null', 'like', 'between', 'exists', 'case', 'when',
+  'then', 'else', 'end', 'union', 'intersect', 'except', 'order', 'by', 'group', 'having',
+  'limit', 'offset', 'distinct', 'all', 'as', 'into', 'values', 'set', 'default',
+  'constraint', 'primary', 'foreign', 'key', 'references', 'check', 'unique', 'index',
+  'user', 'current_user', 'session_user', 'current_date', 'current_time', 'current_timestamp',
+  'true', 'false', 'unknown', 'array', 'cascade', 'restrict', 'grant', 'revoke'
+]);
+
+/**
+ * Sanitize SQL identifier to prevent injection
+ * Used for table names, column names, and other identifiers in SQL queries
+ */
+export function sanitizeSqlIdentifier(identifier: string): string {
+  // Block obvious SQL injection attempts (semicolons, comments, quotes, backslashes)
+  if (/[;'"\\]|--|\*\/|\/\*/.test(identifier)) {
+    throw new Error(`Invalid SQL identifier: ${identifier}`);
+  }
+
+  // If identifier is already quoted, validate and return it
+  if (identifier.startsWith('"') && identifier.endsWith('"')) {
+    const unquoted = identifier.slice(1, -1);
+    // Check for SQL injection in quoted identifiers
+    if (/[;'\\]|--|\*\/|\/\*/.test(unquoted)) {
+      throw new Error(`Invalid SQL identifier: ${identifier}`);
+    }
+    // Check for unescaped double quotes
+    const withoutEscapedQuotes = unquoted.replace(/""/g, '');
+    if (withoutEscapedQuotes.includes('"')) {
+      throw new Error(`Invalid SQL identifier: ${identifier}`);
+    }
+    return identifier;
+  }
+
+  // Standard SQL identifiers: alphanumeric and underscore, starting with letter or underscore
+  // This pattern also allows dots for qualified names (table.column)
+  if (/^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*$/.test(identifier)) {
+    // Check if any part is a reserved keyword
+    const parts = identifier.split('.');
+    const needsQuoting = parts.some(part => RESERVED_KEYWORDS.has(part.toLowerCase()));
+
+    if (needsQuoting) {
+      // Quote each part that needs it
+      const quotedParts = parts.map(part =>
+        RESERVED_KEYWORDS.has(part.toLowerCase()) ? `"${part}"` : part
+      );
+      return quotedParts.join('.');
+    }
+
+    // Return unquoted for backward compatibility (valid identifiers are safe)
+    return identifier;
+  }
+
+  // For special characters (like hyphens, Unicode), quote the identifier
+  // The identifier has already been checked for SQL injection above
+  return `"${identifier.replace(/"/g, '""')}"`;
 }
 
 /**
@@ -1885,6 +1983,10 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
     if (records.length === 0) return [];
 
     const columns = Object.keys(records[0]);
+
+    // Sanitize all column names to prevent SQL injection
+    const sanitizedColumns = columns.map(col => sanitizeSqlIdentifier(col));
+
     const values = records
       .map((record, recordIndex) => {
         return columns
@@ -1900,7 +2002,7 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
       columns.map((col) => record[col])
     );
 
-    const query = `INSERT INTO ${String(tableName)} (${columns.join(
+    const query = `INSERT INTO ${sanitizeSqlIdentifier(String(tableName))} (${sanitizedColumns.join(
       ", "
     )}) VALUES ${values} RETURNING *`;
 
@@ -1946,11 +2048,12 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
       );
     }
 
+    // Sanitize all column names to prevent SQL injection
     const setClause = setColumns
-      .map((col, index) => `${col} = $${index + 1}`)
+      .map((col, index) => `${sanitizeSqlIdentifier(col)} = $${index + 1}`)
       .join(", ");
     const whereClause = whereColumns
-      .map((col, index) => `${col} = $${setColumns.length + index + 1}`)
+      .map((col, index) => `${sanitizeSqlIdentifier(col)} = $${setColumns.length + index + 1}`)
       .join(" AND ");
 
     const params = [
@@ -1958,9 +2061,9 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
       ...whereColumns.map((col) => where[col]),
     ];
 
-    const query = `UPDATE ${String(
+    const query = `UPDATE ${sanitizeSqlIdentifier(String(
       tableName
-    )} SET ${setClause} WHERE ${whereClause} RETURNING *`;
+    ))} SET ${setClause} WHERE ${whereClause} RETURNING *`;
 
     const result = await this.executeWithLogging<Schema[T]>(query, params);
     return result.rows;
@@ -1995,14 +2098,15 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
       );
     }
 
+    // Sanitize all column names to prevent SQL injection
     const whereClause = whereColumns
-      .map((col, index) => `${col} = $${index + 1}`)
+      .map((col, index) => `${sanitizeSqlIdentifier(col)} = $${index + 1}`)
       .join(" AND ");
     const params = whereColumns.map((col) => where[col]);
 
-    const query = `DELETE FROM ${String(
+    const query = `DELETE FROM ${sanitizeSqlIdentifier(String(
       tableName
-    )} WHERE ${whereClause} RETURNING *`;
+    ))} WHERE ${whereClause} RETURNING *`;
 
     const result = await this.executeWithLogging<Schema[T]>(query, params);
     return result.rows;
@@ -2033,6 +2137,10 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
       throw new Error("No columns to update in UPSERT operation");
     }
 
+    // Sanitize all identifiers to prevent SQL injection
+    const sanitizedColumns = columns.map(col => sanitizeSqlIdentifier(col));
+    const sanitizedConflictColumns = conflictColumns.map(col => sanitizeSqlIdentifier(String(col)));
+
     // Build VALUES expression
     const values = records
       .map((record, recordIndex) => {
@@ -2045,16 +2153,19 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
       .map((row) => `(${row})`)
       .join(", ");
 
-    // Build UPDATE SET expression
+    // Build UPDATE SET expression with sanitized identifiers
     const setClause = columnsToUpdate
-      .map((col) => `${col} = EXCLUDED.${col}`)
+      .map((col) => {
+        const sanitizedCol = sanitizeSqlIdentifier(String(col));
+        return `${sanitizedCol} = EXCLUDED.${sanitizedCol}`;
+      })
       .join(", ");
 
     // Build query
     const query = `
-      INSERT INTO ${String(tableName)} (${columns.join(", ")})
+      INSERT INTO ${sanitizeSqlIdentifier(String(tableName))} (${sanitizedColumns.join(", ")})
       VALUES ${values}
-      ON CONFLICT (${conflictColumns.join(", ")})
+      ON CONFLICT (${sanitizedConflictColumns.join(", ")})
       DO UPDATE SET ${setClause}
       RETURNING *
     `;
