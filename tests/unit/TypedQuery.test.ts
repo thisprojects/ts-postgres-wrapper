@@ -1961,4 +1961,189 @@ describe("TypedQuery", () => {
       );
     });
   });
+
+  describe("Window Function Column Sanitization", () => {
+    it("should sanitize columns in rowNumber partitionBy", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      // Test that columns are sanitized
+      await query
+        .select("name")
+        .rowNumber(["department"], [["salary", "DESC"]])
+        .execute();
+
+      const sql = mockPool.getLastQuery().text;
+      expect(sql).toContain("PARTITION BY department");
+      expect(sql).toContain("ORDER BY salary DESC");
+    });
+
+    it("should reject SQL injection in rowNumber partitionBy", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query
+          .select("name")
+          .rowNumber(["dept; DROP TABLE users; --"], [["salary", "DESC"]])
+          .execute();
+      }).rejects.toThrow("Invalid SQL identifier");
+    });
+
+    it("should reject SQL injection in rowNumber orderBy", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query
+          .select("name")
+          .rowNumber(["department"], [["salary; DROP TABLE audit; --", "DESC"]])
+          .execute();
+      }).rejects.toThrow("Invalid SQL identifier");
+    });
+
+    it("should sanitize columns in rank window function", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await query
+        .select("name")
+        .rank(["department"], [["salary", "DESC"]])
+        .execute();
+
+      const sql = mockPool.getLastQuery().text;
+      expect(sql).toContain("RANK() OVER (PARTITION BY department ORDER BY salary DESC)");
+    });
+
+    it("should reject SQL injection in rank partitionBy", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query
+          .select("name")
+          .rank(["dept'; DROP TABLE logs; --"], [["salary", "DESC"]])
+          .execute();
+      }).rejects.toThrow("Invalid SQL identifier");
+    });
+
+    it("should sanitize columns in denseRank window function", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await query
+        .select("name")
+        .denseRank(["department"], [["salary", "DESC"]])
+        .execute();
+
+      const sql = mockPool.getLastQuery().text;
+      expect(sql).toContain("DENSE_RANK() OVER (PARTITION BY department ORDER BY salary DESC)");
+    });
+
+    it("should sanitize column in lag window function", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await query
+        .select("name")
+        .lag("salary", 1, 0, ["department"])
+        .execute();
+
+      const sql = mockPool.getLastQuery().text;
+      expect(sql).toContain("LAG(salary, 1, 0) OVER (PARTITION BY department)");
+    });
+
+    it("should reject SQL injection in lag column", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query
+          .select("name")
+          .lag("salary; DROP TABLE metrics; --", 1, 0, ["department"])
+          .execute();
+      }).rejects.toThrow("Invalid SQL identifier");
+    });
+
+    it("should reject SQL injection in lag partitionBy", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query
+          .select("name")
+          .lag("salary", 1, 0, ["dept'; DELETE FROM sessions; --"])
+          .execute();
+      }).rejects.toThrow("Invalid SQL identifier");
+    });
+
+    it("should sanitize column in lead window function", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await query
+        .select("name")
+        .lead("salary", 1, 0, ["department"])
+        .execute();
+
+      const sql = mockPool.getLastQuery().text;
+      expect(sql).toContain("LEAD(salary, 1, 0) OVER (PARTITION BY department)");
+    });
+
+    it("should reject SQL injection in lead column", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query
+          .select("name")
+          .lead("salary/* comment */; DROP TABLE data; --", 1, 0, ["department"])
+          .execute();
+      }).rejects.toThrow("Invalid SQL identifier");
+    });
+  });
 });

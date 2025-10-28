@@ -83,4 +83,93 @@ describe("TypedQuery orWhere with IN operator", () => {
       [1, 25, 30, 35]
     );
   });
+
+  it("should handle BETWEEN operator with orWhere", async () => {
+    const mockUsers = [createMockUser()];
+    mockPool.setMockResults(mockUsers);
+
+    await db.table("users")
+      .orWhere("age", "BETWEEN", [25, 35])
+      .execute();
+
+    expect(mockPool).toHaveExecutedQueryWithParams(
+      "SELECT * FROM users WHERE age BETWEEN $1 AND $2",
+      [25, 35]
+    );
+  });
+
+  it("should combine BETWEEN with other orWhere conditions", async () => {
+    const mockUsers = [createMockUser()];
+    mockPool.setMockResults(mockUsers);
+
+    await db.table("users")
+      .orWhere("age", "BETWEEN", [25, 35])
+      .orWhere("id", "=", 100)
+      .execute();
+
+    expect(mockPool).toHaveExecutedQueryWithParams(
+      "SELECT * FROM users WHERE age BETWEEN $1 AND $2 OR id = $3",
+      [25, 35, 100]
+    );
+  });
+
+  it("should handle IS NULL operator with orWhere", async () => {
+    const mockUsers = [createMockUser()];
+    mockPool.setMockResults(mockUsers);
+
+    await db.table("users")
+      .orWhere("email", "IS NULL", null)
+      .execute();
+
+    expect(mockPool).toHaveExecutedQueryWithParams(
+      "SELECT * FROM users WHERE email IS NULL",
+      []
+    );
+  });
+
+  it("should handle IS NOT NULL operator with orWhere", async () => {
+    const mockUsers = [createMockUser()];
+    mockPool.setMockResults(mockUsers);
+
+    await db.table("users")
+      .orWhere("email", "IS NOT NULL", null)
+      .execute();
+
+    expect(mockPool).toHaveExecutedQueryWithParams(
+      "SELECT * FROM users WHERE email IS NOT NULL",
+      []
+    );
+  });
+
+  it("should combine IS NULL/IS NOT NULL with other conditions", async () => {
+    const mockUsers = [createMockUser()];
+    mockPool.setMockResults(mockUsers);
+
+    await db.table("users")
+      .where("active", "=", true)
+      .orWhere("email", "IS NULL", null)
+      .orWhere("age", "BETWEEN", [25, 35])
+      .execute();
+
+    expect(mockPool).toHaveExecutedQueryWithParams(
+      "SELECT * FROM users WHERE active = $1 OR email IS NULL OR age BETWEEN $2 AND $3",
+      [true, 25, 35]
+    );
+  });
+
+  it("should handle all new operators together", async () => {
+    const mockUsers = [createMockUser()];
+    mockPool.setMockResults(mockUsers);
+
+    await db.table("users")
+      .orWhere("id", "IN", [1, 2, 3])
+      .orWhere("age", "BETWEEN", [18, 65])
+      .orWhere("email", "IS NOT NULL", null)
+      .execute();
+
+    expect(mockPool).toHaveExecutedQueryWithParams(
+      "SELECT * FROM users WHERE id IN ($1, $2, $3) OR age BETWEEN $4 AND $5 OR email IS NOT NULL",
+      [1, 2, 3, 18, 65]
+    );
+  });
 });

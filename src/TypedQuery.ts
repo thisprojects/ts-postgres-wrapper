@@ -451,8 +451,12 @@ export class TypedQuery<
       | "LIKE"
       | "ILIKE"
       | "NOT ILIKE"
+      | "IN"
+      | "BETWEEN"
+      | "IS NULL"
+      | "IS NOT NULL"
       | JSONOperator,
-    value: Row[K] | JSONValue | JSONPath
+    value: Row[K] | Row[K][] | JSONValue | JSONPath
   ): this;
   orWhere(
     column: string,
@@ -467,6 +471,9 @@ export class TypedQuery<
       | "ILIKE"
       | "NOT ILIKE"
       | "IN"
+      | "BETWEEN"
+      | "IS NULL"
+      | "IS NOT NULL"
       | JSONOperator,
     value: any
   ): this;
@@ -483,6 +490,9 @@ export class TypedQuery<
       | "ILIKE"
       | "NOT ILIKE"
       | "IN"
+      | "BETWEEN"
+      | "IS NULL"
+      | "IS NOT NULL"
       | JSONOperator,
     value: any
   ): this {
@@ -500,6 +510,18 @@ export class TypedQuery<
         .join(", ");
       this.whereClause += `${qualifiedColumn} IN (${placeholders})`;
       this.whereParams.push(...value);
+    } else if (
+      operator === "BETWEEN" &&
+      Array.isArray(value) &&
+      value.length === 2
+    ) {
+      this.whereClause += `${qualifiedColumn} BETWEEN $${
+        this.paramCounter
+      } AND $${this.paramCounter + 1}`;
+      this.whereParams.push(value[0], value[1]);
+      this.paramCounter += 2;
+    } else if (operator === "IS NULL" || operator === "IS NOT NULL") {
+      this.whereClause += `${qualifiedColumn} ${operator}`;
     } else if (
       operator === "->" ||
       operator === "->>" ||
@@ -886,7 +908,7 @@ export class TypedQuery<
   /**
    * Create a JSONB set expression for updating a value at a path
    * Usage: .select(jsonbSet("data", ["address", "city"], "New York"))
-   * Returns: jsonb_set(data, '{address,city}', '"New York"')
+   * Returns: jsonb_set(data, '{address,city}', '"New York"'::jsonb)
    */
   jsonbSet(
     column: string,
@@ -896,17 +918,14 @@ export class TypedQuery<
   ): string {
     const qualifiedColumn = this.qualifyColumnName(column);
     const pathStr = `{${path.join(",")}}`;
-    const jsonValue =
-      typeof value === "string"
-        ? `"${value.replace(/"/g, '\\"')}"`
-        : JSON.stringify(value);
-    return `jsonb_set(${qualifiedColumn}, '${pathStr}', '${jsonValue}', ${createMissing})`;
+    const jsonValueStr = this.escapeSingleQuotes(JSON.stringify(value));
+    return `jsonb_set(${qualifiedColumn}, '${pathStr}', '${jsonValueStr}'::jsonb, ${createMissing})`;
   }
 
   /**
    * Create a JSONB insert expression for inserting a value at a path
    * Usage: .select(jsonbInsert("data", ["items", "0"], "new item"))
-   * Returns: jsonb_insert(data, '{items,0}', '"new item"')
+   * Returns: jsonb_insert(data, '{items,0}', '"new item"'::jsonb)
    */
   jsonbInsert(
     column: string,
@@ -916,11 +935,8 @@ export class TypedQuery<
   ): string {
     const qualifiedColumn = this.qualifyColumnName(column);
     const pathStr = `{${path.join(",")}}`;
-    const jsonValue =
-      typeof value === "string"
-        ? `"${value.replace(/"/g, '\\"')}"`
-        : JSON.stringify(value);
-    return `jsonb_insert(${qualifiedColumn}, '${pathStr}', '${jsonValue}', ${insertAfter})`;
+    const jsonValueStr = this.escapeSingleQuotes(JSON.stringify(value));
+    return `jsonb_insert(${qualifiedColumn}, '${pathStr}', '${jsonValueStr}'::jsonb, ${insertAfter})`;
   }
 
   /**
@@ -951,7 +967,7 @@ export class TypedQuery<
    */
   jsonbConcat(column: string, value: Record<string, any>): string {
     const qualifiedColumn = this.qualifyColumnName(column);
-    return `${qualifiedColumn} || '${JSON.stringify(value)}'::jsonb`;
+    return `${qualifiedColumn} || '${this.escapeSingleQuotes(JSON.stringify(value))}'::jsonb`;
   }
 
   /**
@@ -999,10 +1015,14 @@ export class TypedQuery<
    */
   jsonbBuildObject(obj: Record<string, any>): string {
     const pairs = Object.entries(obj).flatMap(([key, value]) => {
-      const sqlValue =
-        typeof value === "string"
-          ? `'${this.escapeSingleQuotes(value)}'`
-          : value;
+      let sqlValue: string;
+      if (typeof value === "string") {
+        sqlValue = `'${this.escapeSingleQuotes(value)}'`;
+      } else if (value !== null && typeof value === "object") {
+        sqlValue = `'${this.escapeSingleQuotes(JSON.stringify(value))}'::jsonb`;
+      } else {
+        sqlValue = String(value);
+      }
       return [`'${this.escapeSingleQuotes(key)}'`, sqlValue];
     });
     return `jsonb_build_object(${pairs.join(", ")})`;
@@ -1014,9 +1034,12 @@ export class TypedQuery<
    * Returns: jsonb_build_array(1, 2, 3)
    */
   jsonbBuildArray(arr: any[]): string {
-    const values = arr.map((v) =>
-      typeof v === "string" ? `'${this.escapeSingleQuotes(v)}'` : v
-    );
+    const values = arr.map((v) => {
+      if (typeof v === "string") return `'${this.escapeSingleQuotes(v)}'`;
+      if (v !== null && typeof v === "object")
+        return `'${this.escapeSingleQuotes(JSON.stringify(v))}'::jsonb`;
+      return String(v);
+    });
     return `jsonb_build_array(${values.join(", ")})`;
   }
 
@@ -1081,17 +1104,44 @@ export class TypedQuery<
     identifier: string,
     allowComplexExpressions: boolean = false
   ): string {
-    // If complex expressions are allowed (like JSON operators or aggregate functions), skip sanitization
-    // This is used when the column is already a validated expression like data->>'field'
-    if (
-      allowComplexExpressions &&
-      !/^[a-zA-Z_][a-zA-Z0-9_.]*$/.test(identifier)
-    ) {
+    // Allow complex expressions only if they do NOT contain common injection tokens.
+    if (allowComplexExpressions && !/^[a-zA-Z_][a-zA-Z0-9_.]*$/.test(identifier)) {
+      // Check if this is a JSONB function call (these are safe constructions from our library)
+      const isJsonbFunction = /^(jsonb_set|jsonb_insert|jsonb_concat|jsonb_build_object|jsonb_build_array|jsonb_delete_path|jsonb_object_keys|jsonb_typeof|jsonb_array_length)\(/.test(identifier);
+      const isConcatOperation = /^\w+\s*\|\|\s*'/.test(identifier); // e.g., column || '...'
+
+      // JSONB functions are safe - they're constructed by our library with proper escaping
+      if (isJsonbFunction || isConcatOperation) {
+        return identifier;
+      }
+
+      // For other complex expressions, apply security checks
+      // Block semicolons (statement separator) and comment markers
+      // Note: We allow single quotes in complex expressions because they're used legitimately
+      // in JSON operators (e.g., data->'field') and SQL constructs (e.g., INTERVAL '7 days')
+      // We also allow \" (escaped double quote) for JSON values, but block other backslashes
+      if (/;|--|\/\*|\*\//.test(identifier)) {
+        throw new Error(`Invalid SQL identifier: ${identifier}`);
+      }
+      // Block backslashes except when used as \" (JSON escape)
+      if (/\\(?!")/.test(identifier)) {
+        throw new Error(`Invalid SQL identifier: ${identifier}`);
+      }
+      // Block quotes that appear in obviously malicious patterns
+      // e.g., "' OR '1'='1", "x'; DROP", etc.
+      if (/'[^']*(?:OR|AND|DROP|DELETE|INSERT|UPDATE|UNION|SELECT)[^']*'|';|"[^"]*;/i.test(identifier)) {
+        throw new Error(`Invalid SQL identifier: ${identifier}`);
+      }
       return identifier;
     }
 
-    // Allow subqueries (starting with parenthesis) - used for JOIN subqueries
+    // Allow subqueries (starting with parenthesis) if they pass basic token checks
     if (identifier.trim().startsWith("(")) {
+      // For subqueries, we're more restrictive because they should be carefully constructed
+      // Block semicolons, comment markers, and backslashes
+      if (/;|--|\/\*|\*\/|\\/.test(identifier)) {
+        throw new Error(`Invalid SQL subquery: ${identifier}`);
+      }
       return identifier;
     }
 
@@ -1385,10 +1435,10 @@ export class TypedQuery<
     orderBy?: [string, "ASC" | "DESC"][]
   ): this {
     const partition = partitionBy?.length
-      ? `PARTITION BY ${partitionBy.join(", ")}`
+      ? `PARTITION BY ${partitionBy.map(c => this.qualifyColumnName(c)).join(", ")}`
       : "";
     const order = orderBy?.length
-      ? `ORDER BY ${orderBy.map(([col, dir]) => `${col} ${dir}`).join(", ")}`
+      ? `ORDER BY ${orderBy.map(([col, dir]) => `${this.qualifyColumnName(col)} ${dir}`).join(", ")}`
       : "";
     this.windowFunctions.push(`ROW_NUMBER() OVER (${partition} ${order})`);
     return this;
@@ -1399,10 +1449,10 @@ export class TypedQuery<
    */
   rank(partitionBy?: string[], orderBy?: [string, "ASC" | "DESC"][]): this {
     const partition = partitionBy?.length
-      ? `PARTITION BY ${partitionBy.join(", ")}`
+      ? `PARTITION BY ${partitionBy.map(c => this.qualifyColumnName(c)).join(", ")}`
       : "";
     const order = orderBy?.length
-      ? `ORDER BY ${orderBy.map(([col, dir]) => `${col} ${dir}`).join(", ")}`
+      ? `ORDER BY ${orderBy.map(([col, dir]) => `${this.qualifyColumnName(col)} ${dir}`).join(", ")}`
       : "";
     this.windowFunctions.push(`RANK() OVER (${partition} ${order})`);
     return this;
@@ -1416,10 +1466,10 @@ export class TypedQuery<
     orderBy?: [string, "ASC" | "DESC"][]
   ): this {
     const partition = partitionBy?.length
-      ? `PARTITION BY ${partitionBy.join(", ")}`
+      ? `PARTITION BY ${partitionBy.map(c => this.qualifyColumnName(c)).join(", ")}`
       : "";
     const order = orderBy?.length
-      ? `ORDER BY ${orderBy.map(([col, dir]) => `${col} ${dir}`).join(", ")}`
+      ? `ORDER BY ${orderBy.map(([col, dir]) => `${this.qualifyColumnName(col)} ${dir}`).join(", ")}`
       : "";
     this.windowFunctions.push(`DENSE_RANK() OVER (${partition} ${order})`);
     return this;
@@ -1435,11 +1485,11 @@ export class TypedQuery<
     partitionBy?: string[]
   ): this {
     const partition = partitionBy?.length
-      ? `PARTITION BY ${partitionBy.join(", ")}`
+      ? `PARTITION BY ${partitionBy.map(c => this.qualifyColumnName(c)).join(", ")}`
       : "";
     const def = defaultValue !== undefined ? `, ${defaultValue}` : "";
     this.windowFunctions.push(
-      `LAG(${column}, ${offset}${def}) OVER (${partition})`
+      `LAG(${this.qualifyColumnName(column)}, ${offset}${def}) OVER (${partition})`
     );
     return this;
   }
@@ -1454,11 +1504,11 @@ export class TypedQuery<
     partitionBy?: string[]
   ): this {
     const partition = partitionBy?.length
-      ? `PARTITION BY ${partitionBy.join(", ")}`
+      ? `PARTITION BY ${partitionBy.map(c => this.qualifyColumnName(c)).join(", ")}`
       : "";
     const def = defaultValue !== undefined ? `, ${defaultValue}` : "";
     this.windowFunctions.push(
-      `LEAD(${column}, ${offset}${def}) OVER (${partition})`
+      `LEAD(${this.qualifyColumnName(column)}, ${offset}${def}) OVER (${partition})`
     );
     return this;
   }
