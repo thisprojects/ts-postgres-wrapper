@@ -188,13 +188,11 @@ describe("stripSqlComments - PostgreSQL Edge Cases", () => {
   });
 
   describe("Special PostgreSQL cases", () => {
-    it("should handle dollar-quoted strings (common edge case)", () => {
-      // Note: This is a known limitation - dollar quotes would require more complex parsing
-      // For now, we document that dollar quotes may not work correctly with comment stripping
+    it("should handle dollar-quoted strings (fully supported)", () => {
       const sql = "SELECT $$It's -- a test$$";
       const stripped = stripSqlComments(sql);
-      // This will fail to preserve the content correctly, which is expected
-      // Users should use raw queries for dollar-quoted strings
+      // Dollar quotes are now fully supported!
+      expect(stripped).toBe(sql);
     });
 
     it("should handle identifier quotes (double quotes for column names)", () => {

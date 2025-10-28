@@ -97,18 +97,83 @@ export function isTransientError(error: any): boolean {
 /**
  * Strip SQL comments from a query string
  * Removes both line comments (--) and block comments
- * Properly handles PostgreSQL string literals with escaped quotes
+ * Properly handles PostgreSQL string literals with escaped quotes and dollar-quoted strings
  */
 export function stripSqlComments(sql: string): string {
   let result = '';
   let inString = false;
   let stringChar = '';
   let inBlockComment = false;
+  let inDollarQuote = false;
+  let dollarQuoteTag = '';
 
   for (let i = 0; i < sql.length; i++) {
     const char = sql[i];
     const next = sql[i + 1];
-    const prev = sql[i - 1];
+
+    // Handle dollar-quoted strings $tag$...$tag$
+    // Dollar quotes take precedence over everything else when active
+    if (inDollarQuote) {
+      result += char;
+
+      // Check if we're at the closing dollar quote
+      if (char === '$') {
+        // Try to match the closing tag
+        let potentialTag = '$';
+        let j = i + 1;
+
+        // Extract potential closing tag
+        while (j < sql.length && sql[j] !== '$') {
+          potentialTag += sql[j];
+          j++;
+        }
+
+        if (j < sql.length && sql[j] === '$') {
+          potentialTag += '$';
+
+          // Check if this matches our opening tag
+          if (potentialTag === dollarQuoteTag) {
+            // Found closing tag - add remaining characters and exit dollar quote
+            for (let k = i + 1; k < j + 1; k++) {
+              result += sql[k];
+            }
+            i = j; // Move past the closing tag
+            inDollarQuote = false;
+            dollarQuoteTag = '';
+          }
+        }
+      }
+      continue;
+    }
+
+    // Check for dollar quote start (only outside strings and comments)
+    if (!inString && !inBlockComment && char === '$') {
+      // Try to extract dollar quote tag
+      let tag = '$';
+      let j = i + 1;
+
+      // Tag can contain letters, digits, and underscores (or be empty)
+      while (j < sql.length && /[a-zA-Z0-9_]/.test(sql[j])) {
+        tag += sql[j];
+        j++;
+      }
+
+      // Must end with another $
+      if (j < sql.length && sql[j] === '$') {
+        tag += '$';
+
+        // This is a valid dollar quote
+        inDollarQuote = true;
+        dollarQuoteTag = tag;
+
+        // Add the opening tag to result
+        for (let k = i; k <= j; k++) {
+          result += sql[k];
+        }
+        i = j; // Move past the opening tag
+        continue;
+      }
+    }
 
     // Handle block comments /* ... */
     if (!inString && !inBlockComment && char === '/' && next === '*') {
