@@ -196,4 +196,46 @@ describe("TypedPg Transaction Tests", () => {
 
     expect(errorPool.release).not.toHaveBeenCalled();
   });
+
+  it("should preserve options/logger in transaction context", async () => {
+    const logEntries: any[] = [];
+    const testLogger = {
+      log: (level: string, entry: any) => {
+        logEntries.push({ level, entry });
+      }
+    };
+
+    const options = {
+      logger: testLogger,
+      timeout: 5000,
+      retryAttempts: 2,
+    };
+
+    const dbWithOptions = new TypedPg<TestSchema>(mockPool as any, undefined, options);
+    const mockUser = createMockUser();
+    mockPool.setMockResults([mockUser]);
+
+    await dbWithOptions.transaction(async (trx) => {
+      // Verify options are preserved in transaction
+      expect(trx.getOptions()).toMatchObject({
+        logger: testLogger,
+        timeout: 5000,
+        retryAttempts: 2,
+      });
+      expect(trx.getLogger()).toBe(testLogger);
+
+      await trx.insert("users", {
+        name: "Test",
+        email: "test@example.com",
+        age: 30,
+        active: true,
+      });
+    });
+
+    // Verify logger was used in transaction
+    expect(logEntries.length).toBeGreaterThan(0);
+    const insertLog = logEntries.find(e => e.entry.query.includes("INSERT INTO"));
+    expect(insertLog).toBeDefined();
+    expect(insertLog.level).toBe("debug");
+  });
 });

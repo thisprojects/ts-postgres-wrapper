@@ -1,14 +1,8 @@
-import { Pool, PoolConfig } from "pg";
-import type {
-  QueryLogger,
-  SecurityOptions,
-  TypedPgOptions,
-  ErrorContext,
-} from './types';
-import { sanitizeSqlIdentifier, validateQueryComplexity } from './utils';
-import { DatabaseError, isTransientError } from './errors';
-import { ConsoleLogger } from './logger';
-import { TypedQuery } from './TypedQuery';
+import { Pool } from "pg";
+import type { QueryLogger, TypedPgOptions, ErrorContext } from "./types";
+import { sanitizeSqlIdentifier, validateQueryComplexity } from "./utils";
+import { DatabaseError, isTransientError } from "./errors";
+import { TypedQuery } from "./TypedQuery";
 
 /**
  * Main wrapper for type-safe queries
@@ -20,12 +14,16 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
   private options: TypedPgOptions;
   private batchOperationTimestamps: number[] = [];
 
-  constructor(pool: Pool, schema?: Schema, optionsOrLogger?: QueryLogger | TypedPgOptions) {
+  constructor(
+    pool: Pool,
+    schema?: Schema,
+    optionsOrLogger?: QueryLogger | TypedPgOptions
+  ) {
     this.pool = pool;
     this.schema = schema || ({} as Schema);
 
     // Handle backward compatibility: support both logger and options
-    if (optionsOrLogger && 'log' in optionsOrLogger) {
+    if (optionsOrLogger && "log" in optionsOrLogger) {
       // Old API: logger passed directly
       this.logger = optionsOrLogger;
       this.options = {};
@@ -40,25 +38,25 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
       timeout: 30000, // 30 seconds default
       retryAttempts: 0, // No retries by default
       retryDelay: 1000, // 1 second between retries
-      ...this.options
+      ...this.options,
     };
 
     // Set up pool error handler (if pool supports event emitters)
     if (this.pool.on) {
-      this.pool.on('error', (err) => {
+      this.pool.on("error", (err) => {
         const context: ErrorContext = {
-          query: 'pool error',
+          query: "pool error",
           params: [],
-          operation: 'connection'
+          operation: "connection",
         };
 
         if (this.logger) {
-          this.logger.log('error', {
-            query: 'Pool error',
+          this.logger.log("error", {
+            query: "Pool error",
             params: [],
             duration: 0,
             timestamp: new Date(),
-            error: err
+            error: err,
           });
         }
 
@@ -104,7 +102,7 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
    * Sleep for a given duration
    */
   private sleep(ms: number): Promise<void> {
-    return new Promise(resolve => {
+    return new Promise((resolve) => {
       const timer = setTimeout(resolve, ms);
       // Prevent the timer from keeping the process alive
       if (timer.unref) {
@@ -127,7 +125,7 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
 
     // Remove timestamps older than 1 second
     this.batchOperationTimestamps = this.batchOperationTimestamps.filter(
-      ts => ts > oneSecondAgo
+      (ts) => ts > oneSecondAgo
     );
 
     // If we're at the limit, wait until the oldest timestamp expires
@@ -139,7 +137,7 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
       }
       // Clean up again after waiting
       this.batchOperationTimestamps = this.batchOperationTimestamps.filter(
-        ts => ts > Date.now() - 1000
+        (ts) => ts > Date.now() - 1000
       );
     }
 
@@ -153,7 +151,7 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
   private async executeWithLogging<T = any>(
     query: string,
     params: any[],
-    operation: string = 'query'
+    operation: string = "query"
   ): Promise<{ rows: T[] }> {
     // Validate query complexity if security options are configured
     if (this.options.security) {
@@ -176,14 +174,21 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
             this.pool.query(query, params),
             new Promise((_, reject) => {
               const timer = setTimeout(
-                () => reject(new DatabaseError('Query timeout exceeded', 'TIMEOUT', context)),
+                () =>
+                  reject(
+                    new DatabaseError(
+                      "Query timeout exceeded",
+                      "TIMEOUT",
+                      context
+                    )
+                  ),
                 this.options.timeout
               );
               // Prevent the timer from keeping the process alive
               if (timer.unref) {
                 timer.unref();
               }
-            })
+            }),
           ]);
         } else {
           result = await this.pool.query(query, params);
@@ -196,7 +201,7 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
             query,
             params,
             duration,
-            timestamp
+            timestamp,
           });
         }
 
@@ -211,7 +216,7 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
             params,
             duration,
             timestamp,
-            error: lastError
+            error: lastError,
           });
         }
 
@@ -224,7 +229,7 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
               query: `Retrying query (attempt ${attempt}/${maxAttempts})`,
               params: [],
               duration: 0,
-              timestamp: new Date()
+              timestamp: new Date(),
             });
           }
 
@@ -253,7 +258,10 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
     }
 
     // This should never be reached, but TypeScript doesn't know that
-    throw lastError || new DatabaseError('Query failed', undefined, { query, params, operation });
+    throw (
+      lastError ||
+      new DatabaseError("Query failed", undefined, { query, params, operation })
+    );
   }
 
   /**
@@ -286,7 +294,7 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
     const columns = Object.keys(records[0]);
 
     // Sanitize all column names to prevent SQL injection
-    const sanitizedColumns = columns.map(col => sanitizeSqlIdentifier(col));
+    const sanitizedColumns = columns.map((col) => sanitizeSqlIdentifier(col));
 
     const values = records
       .map((record, recordIndex) => {
@@ -303,9 +311,9 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
       columns.map((col) => record[col])
     );
 
-    const query = `INSERT INTO ${sanitizeSqlIdentifier(String(tableName))} (${sanitizedColumns.join(
-      ", "
-    )}) VALUES ${values} RETURNING *`;
+    const query = `INSERT INTO ${sanitizeSqlIdentifier(
+      String(tableName)
+    )} (${sanitizedColumns.join(", ")}) VALUES ${values} RETURNING *`;
 
     const result = await this.executeWithLogging<Schema[T]>(query, params);
     return result.rows;
@@ -354,7 +362,10 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
       .map((col, index) => `${sanitizeSqlIdentifier(col)} = $${index + 1}`)
       .join(", ");
     const whereClause = whereColumns
-      .map((col, index) => `${sanitizeSqlIdentifier(col)} = $${setColumns.length + index + 1}`)
+      .map(
+        (col, index) =>
+          `${sanitizeSqlIdentifier(col)} = $${setColumns.length + index + 1}`
+      )
       .join(" AND ");
 
     const params = [
@@ -362,9 +373,9 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
       ...whereColumns.map((col) => where[col]),
     ];
 
-    const query = `UPDATE ${sanitizeSqlIdentifier(String(
-      tableName
-    ))} SET ${setClause} WHERE ${whereClause} RETURNING *`;
+    const query = `UPDATE ${sanitizeSqlIdentifier(
+      String(tableName)
+    )} SET ${setClause} WHERE ${whereClause} RETURNING *`;
 
     const result = await this.executeWithLogging<Schema[T]>(query, params);
     return result.rows;
@@ -405,9 +416,9 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
       .join(" AND ");
     const params = whereColumns.map((col) => where[col]);
 
-    const query = `DELETE FROM ${sanitizeSqlIdentifier(String(
-      tableName
-    ))} WHERE ${whereClause} RETURNING *`;
+    const query = `DELETE FROM ${sanitizeSqlIdentifier(
+      String(tableName)
+    )} WHERE ${whereClause} RETURNING *`;
 
     const result = await this.executeWithLogging<Schema[T]>(query, params);
     return result.rows;
@@ -431,7 +442,9 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
     }
 
     const columns = Object.keys(records[0]);
-    const columnsToUpdate = updateColumns || columns.filter(col => !conflictColumns.includes(col as any));
+    const columnsToUpdate =
+      updateColumns ||
+      columns.filter((col) => !conflictColumns.includes(col as any));
 
     // Validate we have columns to update
     if (columnsToUpdate.length === 0) {
@@ -439,8 +452,10 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
     }
 
     // Sanitize all identifiers to prevent SQL injection
-    const sanitizedColumns = columns.map(col => sanitizeSqlIdentifier(col));
-    const sanitizedConflictColumns = conflictColumns.map(col => sanitizeSqlIdentifier(String(col)));
+    const sanitizedColumns = columns.map((col) => sanitizeSqlIdentifier(col));
+    const sanitizedConflictColumns = conflictColumns.map((col) =>
+      sanitizeSqlIdentifier(String(col))
+    );
 
     // Build VALUES expression
     const values = records
@@ -464,7 +479,9 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
 
     // Build query
     const query = `
-      INSERT INTO ${sanitizeSqlIdentifier(String(tableName))} (${sanitizedColumns.join(", ")})
+      INSERT INTO ${sanitizeSqlIdentifier(
+        String(tableName)
+      )} (${sanitizedColumns.join(", ")})
       VALUES ${values}
       ON CONFLICT (${sanitizedConflictColumns.join(", ")})
       DO UPDATE SET ${setClause}
@@ -500,7 +517,7 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
 
     try {
       await client.query("BEGIN");
-      const txPg = new TypedPg<Schema>(client as any, this.schema);
+      const txPg = new TypedPg<Schema>(client as any, this.schema, this.options);
       const result = await callback(txPg);
       await client.query("COMMIT");
       return result;
@@ -552,7 +569,7 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
       const result = {
         inserted: {} as Record<T, Schema[T][]>,
         updated: {} as Record<T, Schema[T][]>,
-        deleted: {} as Record<T, Schema[T][]>
+        deleted: {} as Record<T, Schema[T][]>,
       };
 
       // Process inserts
@@ -603,11 +620,14 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
     if (data.length === 0) return [];
 
     // Validate batch size if security options are configured
-    if (this.options.security?.maxBatchSize && data.length > this.options.security.maxBatchSize) {
+    if (
+      this.options.security?.maxBatchSize &&
+      data.length > this.options.security.maxBatchSize
+    ) {
       throw new DatabaseError(
         `Batch insert size ${data.length} exceeds maximum allowed ${this.options.security.maxBatchSize}`,
-        'BATCH_TOO_LARGE',
-        { query: `INSERT INTO ${table}`, params: [], operation: 'batchInsert' }
+        "BATCH_TOO_LARGE",
+        { query: `INSERT INTO ${table}`, params: [], operation: "batchInsert" }
       );
     }
 
@@ -642,11 +662,14 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
     if (updates.length === 0) return [];
 
     // Validate batch size if security options are configured
-    if (this.options.security?.maxBatchSize && updates.length > this.options.security.maxBatchSize) {
+    if (
+      this.options.security?.maxBatchSize &&
+      updates.length > this.options.security.maxBatchSize
+    ) {
       throw new DatabaseError(
         `Batch update size ${updates.length} exceeds maximum allowed ${this.options.security.maxBatchSize}`,
-        'BATCH_TOO_LARGE',
-        { query: `UPDATE ${table}`, params: [], operation: 'batchUpdate' }
+        "BATCH_TOO_LARGE",
+        { query: `UPDATE ${table}`, params: [], operation: "batchUpdate" }
       );
     }
 
@@ -654,7 +677,7 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
 
     // Execute all updates in a single transaction
     return this.transaction(async (tx) => {
-      const promises = updates.map(update =>
+      const promises = updates.map((update) =>
         tx.update(table, update.set, update.where)
       );
       const results = await Promise.all(promises);
@@ -672,11 +695,14 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
     if (conditions.length === 0) return [];
 
     // Validate batch size if security options are configured
-    if (this.options.security?.maxBatchSize && conditions.length > this.options.security.maxBatchSize) {
+    if (
+      this.options.security?.maxBatchSize &&
+      conditions.length > this.options.security.maxBatchSize
+    ) {
       throw new DatabaseError(
         `Batch delete size ${conditions.length} exceeds maximum allowed ${this.options.security.maxBatchSize}`,
-        'BATCH_TOO_LARGE',
-        { query: `DELETE FROM ${table}`, params: [], operation: 'batchDelete' }
+        "BATCH_TOO_LARGE",
+        { query: `DELETE FROM ${table}`, params: [], operation: "batchDelete" }
       );
     }
 
@@ -684,9 +710,7 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
 
     // Execute all deletes in a single transaction
     return this.transaction(async (tx) => {
-      const promises = conditions.map(where =>
-        tx.delete(table, where)
-      );
+      const promises = conditions.map((where) => tx.delete(table, where));
       const results = await Promise.all(promises);
       return results.flat();
     });
@@ -737,7 +761,7 @@ export function createTypedPg<
     if (!(poolOrConfig instanceof Pool)) {
       // Set up connection error handling
       if (pool.on) {
-        pool.on('error', (err) => {
+        pool.on("error", (err) => {
           // Error will be handled by TypedPg instance
           // This is just to prevent unhandled promise rejections
         });
@@ -748,18 +772,21 @@ export function createTypedPg<
         const connectPromise = pool.connect();
         if (connectPromise && connectPromise.then) {
           connectPromise
-            .then(client => {
+            .then((client) => {
               if (client && client.release) {
                 client.release();
               }
             })
-            .catch(err => {
-              const options = (optionsOrLogger && 'log' in optionsOrLogger) ? {} : (optionsOrLogger || {});
+            .catch((err) => {
+              const options =
+                optionsOrLogger && "log" in optionsOrLogger
+                  ? {}
+                  : optionsOrLogger || {};
               if (options.onError) {
                 options.onError(err, {
-                  query: 'connection test',
+                  query: "connection test",
                   params: [],
-                  operation: 'connect'
+                  operation: "connect",
                 });
               }
               // Don't throw here - let queries fail naturally with proper error handling
@@ -770,20 +797,21 @@ export function createTypedPg<
 
     return new TypedPg<Schema>(pool, schema, optionsOrLogger);
   } catch (error) {
-    const options = (optionsOrLogger && 'log' in optionsOrLogger) ? {} : (optionsOrLogger || {});
+    const options =
+      optionsOrLogger && "log" in optionsOrLogger ? {} : optionsOrLogger || {};
 
     if (options.onError) {
       options.onError(error as Error, {
-        query: 'pool creation',
+        query: "pool creation",
         params: [],
-        operation: 'init'
+        operation: "init",
       });
     }
 
     throw new DatabaseError(
       `Failed to create database pool: ${(error as Error).message}`,
       (error as any).code,
-      { query: 'pool creation', params: [], operation: 'init' },
+      { query: "pool creation", params: [], operation: "init" },
       error as Error
     );
   }
