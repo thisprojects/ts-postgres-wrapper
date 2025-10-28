@@ -339,16 +339,17 @@ describe("CRUD SQL Injection Protection", () => {
       expect(query.text).toContain('"名前"');
     });
 
-    it("should reject quoted identifiers with quotes in the column name", async () => {
+    it("should accept properly quoted identifiers in the column name", async () => {
       const quotedData: any = {
         id: 1,
         '"quoted_name"': "test"
       };
 
-      // This contains double quotes which triggers injection check
-      await expect(async () => {
-        await db.insert("users", quotedData);
-      }).rejects.toThrow("Invalid SQL identifier");
+      // This is a validly quoted identifier and should be accepted
+      await db.insert("users", quotedData);
+
+      const executedQuery = mockPool.getLastQuery();
+      expect(executedQuery.text).toContain('"quoted_name"');
     });
 
     it("should reject malicious quoted identifiers", async () => {

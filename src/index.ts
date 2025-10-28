@@ -1,552 +1,28 @@
 import { Pool } from "pg";
 
-/**
- * Query logging interface
- */
-export interface QueryLogEntry {
-  query: string;
-  params: any[];
-  duration?: number;
-  timestamp: Date;
-  error?: Error;
-}
+// Import types
+import type {
+  QueryLogger,
+  SecurityOptions,
+  TypedPgOptions,
+  ErrorContext,
+  JSONOperator,
+  JSONPath,
+  JSONValue,
+  ColumnNames,
+  ColumnAlias,
+  ExpressionAlias,
+  ColumnSpec,
+  ResultColumns,
+  JoinCondition,
+  JoinConfig,
+} from './types';
 
-export type LogLevel = "debug" | "info" | "warn" | "error";
+// Import utilities
+import { sanitizeSqlIdentifier, stripSqlComments, validateQueryComplexity } from './utils';
 
-export interface QueryLogger {
-  log(level: LogLevel, entry: QueryLogEntry): void;
-}
-
-/**
- * Security options for query execution
- */
-export interface SecurityOptions {
-  maxJoins?: number; // Maximum number of JOINs allowed per query (default: 10)
-  maxWhereConditions?: number; // Maximum WHERE conditions (default: 50)
-  maxBatchSize?: number; // Maximum batch operation size (default: 1000)
-  maxQueryLength?: number; // Maximum SQL query length in characters (default: 50000)
-  allowComments?: boolean; // Allow SQL comments in queries (default: false)
-  rateLimitBatch?: boolean; // Enable rate limiting for batch operations (default: false)
-  batchRateLimit?: number; // Max batch operations per second (default: 10)
-}
-
-/**
- * Configuration options for TypedPg
- */
-export interface TypedPgOptions {
-  logger?: QueryLogger;
-  timeout?: number; // Query timeout in milliseconds
-  retryAttempts?: number; // Number of retry attempts for transient errors
-  retryDelay?: number; // Delay between retries in milliseconds
-  onError?: (error: Error, context: ErrorContext) => void; // Custom error handler
-  security?: SecurityOptions; // Security options for query validation
-}
-
-/**
- * Error context for custom error handlers
- */
-export interface ErrorContext {
-  query: string;
-  params: any[];
-  attempt?: number;
-  operation?: string;
-}
-
-/**
- * Custom error class for database errors
- */
-export class DatabaseError extends Error {
-  constructor(
-    message: string,
-    public readonly code?: string,
-    public readonly context?: ErrorContext,
-    public readonly originalError?: Error
-  ) {
-    super(message);
-    this.name = "DatabaseError";
-    Object.setPrototypeOf(this, DatabaseError.prototype);
-  }
-}
-
-/**
- * Check if an error is a transient error that can be retried
- */
-export function isTransientError(error: any): boolean {
-  if (!error) return false;
-
-  // PostgreSQL error codes for transient errors
-  const transientCodes = new Set([
-    '40001', // serialization_failure
-    '40P01', // deadlock_detected
-    '53000', // insufficient_resources
-    '53100', // disk_full
-    '53200', // out_of_memory
-    '53300', // too_many_connections
-    '57P03', // cannot_connect_now
-    '58000', // system_error
-    '58030', // io_error
-    'ECONNRESET', // Connection reset
-    'ETIMEDOUT', // Connection timeout
-    'ENOTFOUND', // DNS lookup failed
-    'ECONNREFUSED', // Connection refused
-  ]);
-
-  return transientCodes.has(error.code);
-}
-
-/**
- * Strip SQL comments from a query string
- * Removes both line comments (--) and block comments
- * Properly handles PostgreSQL string literals with escaped quotes and dollar-quoted strings
- */
-export function stripSqlComments(sql: string): string {
-  let result = '';
-  let inString = false;
-  let stringChar = '';
-  let inBlockComment = false;
-  let inDollarQuote = false;
-  let dollarQuoteTag = '';
-
-  for (let i = 0; i < sql.length; i++) {
-    const char = sql[i];
-    const next = sql[i + 1];
-
-    // Handle dollar-quoted strings $tag$...$tag$
-    // Dollar quotes take precedence over everything else when active
-    if (inDollarQuote) {
-      result += char;
-
-      // Check if we're at the closing dollar quote
-      if (char === '$') {
-        // Try to match the closing tag
-        let potentialTag = '$';
-        let j = i + 1;
-
-        // Extract potential closing tag
-        while (j < sql.length && sql[j] !== '$') {
-          potentialTag += sql[j];
-          j++;
-        }
-
-        if (j < sql.length && sql[j] === '$') {
-          potentialTag += '$';
-
-          // Check if this matches our opening tag
-          if (potentialTag === dollarQuoteTag) {
-            // Found closing tag - add remaining characters and exit dollar quote
-            for (let k = i + 1; k < j + 1; k++) {
-              result += sql[k];
-            }
-            i = j; // Move past the closing tag
-            inDollarQuote = false;
-            dollarQuoteTag = '';
-          }
-        }
-      }
-      continue;
-    }
-
-    // Check for dollar quote start (only outside strings and comments)
-    if (!inString && !inBlockComment && char === '$') {
-      // Try to extract dollar quote tag
-      let tag = '$';
-      let j = i + 1;
-
-      // Tag can contain letters, digits, and underscores (or be empty)
-      while (j < sql.length && /[a-zA-Z0-9_]/.test(sql[j])) {
-        tag += sql[j];
-        j++;
-      }
-
-      // Must end with another $
-      if (j < sql.length && sql[j] === '$') {
-        tag += '$';
-
-        // This is a valid dollar quote
-        inDollarQuote = true;
-        dollarQuoteTag = tag;
-
-        // Add the opening tag to result
-        for (let k = i; k <= j; k++) {
-          result += sql[k];
-        }
-        i = j; // Move past the opening tag
-        continue;
-      }
-    }
-
-    // Handle block comments /* ... */
-    if (!inString && !inBlockComment && char === '/' && next === '*') {
-      inBlockComment = true;
-      i++; // Skip the *
-      continue;
-    }
-
-    if (inBlockComment) {
-      if (char === '*' && next === '/') {
-        inBlockComment = false;
-        i++; // Skip the /
-      }
-      continue; // Skip all characters inside block comment
-    }
-
-    // Handle string literals (single and double quotes)
-    if (char === "'" || char === '"') {
-      if (!inString) {
-        // Starting a string literal
-        inString = true;
-        stringChar = char;
-        result += char;
-      } else if (char === stringChar) {
-        // Could be end of string or escaped quote
-        if (next === stringChar) {
-          // PostgreSQL escaped quote: '' or ""
-          result += char;
-          result += next;
-          i++; // Skip the next quote
-        } else {
-          // End of string literal
-          inString = false;
-          stringChar = '';
-          result += char;
-        }
-      } else {
-        // Different quote character inside string
-        result += char;
-      }
-      continue;
-    }
-
-    // Handle line comments -- ...
-    if (!inString && char === '-' && next === '-') {
-      // Skip until end of line
-      while (i < sql.length && sql[i] !== '\n') {
-        i++;
-      }
-      // Include the newline if present
-      if (i < sql.length && sql[i] === '\n') {
-        result += '\n';
-      }
-      continue;
-    }
-
-    // Regular character
-    if (!inBlockComment) {
-      result += char;
-    }
-  }
-
-  return result.trim();
-}
-
-/**
- * Validate query complexity to prevent DoS attacks
- */
-export function validateQueryComplexity(
-  query: string,
-  security: SecurityOptions
-): void {
-  // Check query length
-  const maxLength = security.maxQueryLength || 50000;
-  if (query.length > maxLength) {
-    throw new DatabaseError(
-      `Query exceeds maximum length of ${maxLength} characters`,
-      'QUERY_TOO_LONG',
-      { query: query.substring(0, 200) + '...', params: [] }
-    );
-  }
-
-  // Strip comments if not allowed
-  let processedQuery = query;
-  if (!security.allowComments) {
-    const stripped = stripSqlComments(query);
-    if (stripped !== query) {
-      throw new DatabaseError(
-        'SQL comments are not allowed',
-        'COMMENTS_NOT_ALLOWED',
-        { query: query.substring(0, 200), params: [] }
-      );
-    }
-    processedQuery = stripped;
-  }
-
-  // Count JOINs
-  const maxJoins = security.maxJoins || 10;
-  const joinMatches = processedQuery.match(/\b(INNER|LEFT|RIGHT|FULL|CROSS)\s+JOIN\b/gi);
-  const joinCount = joinMatches ? joinMatches.length : 0;
-  if (joinCount > maxJoins) {
-    throw new DatabaseError(
-      `Query has ${joinCount} JOINs, maximum allowed is ${maxJoins}`,
-      'TOO_MANY_JOINS',
-      { query: processedQuery.substring(0, 200), params: [] }
-    );
-  }
-
-  // Count WHERE conditions (approximate by counting AND/OR)
-  const maxConditions = security.maxWhereConditions || 50;
-  const whereMatch = processedQuery.match(/\bWHERE\b/i);
-  if (whereMatch) {
-    const whereSection = processedQuery.substring(whereMatch.index!);
-    const andOrMatches = whereSection.match(/\b(AND|OR)\b/gi);
-    const conditionCount = (andOrMatches ? andOrMatches.length : 0) + 1;
-    if (conditionCount > maxConditions) {
-      throw new DatabaseError(
-        `Query has ${conditionCount} WHERE conditions, maximum allowed is ${maxConditions}`,
-        'TOO_MANY_CONDITIONS',
-        { query: processedQuery.substring(0, 200), params: [] }
-      );
-    }
-  }
-}
-
-/**
- * Default console logger
- */
-export class ConsoleLogger implements QueryLogger {
-  constructor(private minLevel: LogLevel = "info") {}
-
-  log(level: LogLevel, entry: QueryLogEntry): void {
-    const levels: LogLevel[] = ["debug", "info", "warn", "error"];
-    if (levels.indexOf(level) < levels.indexOf(this.minLevel)) {
-      return;
-    }
-
-    const timestamp = entry.timestamp.toISOString();
-    const duration = entry.duration ? `${entry.duration}ms` : "N/A";
-    const message = `[${timestamp}] [${level.toUpperCase()}] Query: ${entry.query} | Params: ${JSON.stringify(entry.params)} | Duration: ${duration}`;
-
-    if (entry.error) {
-      console.error(message, entry.error);
-    } else if (level === "error") {
-      console.error(message);
-    } else if (level === "warn") {
-      console.warn(message);
-    } else {
-      console.log(message);
-    }
-  }
-}
-
-/**
- * PostgreSQL reserved keywords that must be quoted when used as identifiers
- * Source: PostgreSQL 16 official documentation
- * This list includes:
- * 1. Strictly reserved keywords (cannot be used as identifiers without quoting)
- * 2. Commonly problematic keywords that often cause issues
- *
- * Note: This is a conservative list focused on keywords that MUST be quoted.
- * Many PostgreSQL keywords are non-reserved and can be used unquoted, but
- * we include the most commonly used SQL keywords for safety.
- */
-const RESERVED_KEYWORDS = new Set([
-  // Strictly reserved keywords in PostgreSQL (cannot be used as identifiers without quoting)
-  // Based on PostgreSQL official documentation
-  'all', 'analyse', 'analyze', 'and', 'any', 'array', 'as', 'asc', 'asymmetric',
-  'both', 'case', 'cast', 'check', 'collate', 'constraint', 'create',
-  'current_catalog', 'current_date', 'current_role', 'current_time',
-  'current_timestamp', 'current_user', 'default', 'deferrable', 'desc',
-  'distinct', 'do', 'else', 'end', 'except', 'false', 'fetch', 'for',
-  'foreign', 'from', 'grant', 'group', 'having', 'in', 'initially',
-  'intersect', 'into', 'lateral', 'leading', 'limit', 'localtime',
-  'localtimestamp', 'not', 'null', 'offset', 'on', 'only', 'or',
-  'order', 'placing', 'primary', 'references', 'returning', 'select',
-  'session_user', 'some', 'symmetric', 'table', 'then', 'to', 'trailing',
-  'true', 'union', 'unique', 'user', 'using', 'variadic', 'when', 'where',
-  'window', 'with',
-
-  // Common SQL keywords that should be quoted (DML/DDL)
-  'alter', 'begin', 'commit', 'delete', 'drop', 'insert', 'merge', 'rollback',
-  'truncate', 'update',
-
-  // JOIN keywords
-  'cross', 'full', 'inner', 'join', 'left', 'natural', 'outer', 'right'
-]);
-
-/**
- * Sanitize SQL identifier to prevent injection
- * Used for table names, column names, and other identifiers in SQL queries
- */
-export function sanitizeSqlIdentifier(identifier: string): string {
-  // Block obvious SQL injection attempts (semicolons, comments, quotes, backslashes)
-  if (/[;'"\\]|--|\*\/|\/\*/.test(identifier)) {
-    throw new Error(`Invalid SQL identifier: ${identifier}`);
-  }
-
-  // If identifier is already quoted, validate and return it
-  if (identifier.startsWith('"') && identifier.endsWith('"')) {
-    const unquoted = identifier.slice(1, -1);
-    // Check for SQL injection in quoted identifiers
-    if (/[;'\\]|--|\*\/|\/\*/.test(unquoted)) {
-      throw new Error(`Invalid SQL identifier: ${identifier}`);
-    }
-    // Check for unescaped double quotes
-    const withoutEscapedQuotes = unquoted.replace(/""/g, '');
-    if (withoutEscapedQuotes.includes('"')) {
-      throw new Error(`Invalid SQL identifier: ${identifier}`);
-    }
-    return identifier;
-  }
-
-  // Standard SQL identifiers: alphanumeric and underscore, starting with letter or underscore
-  // This pattern also allows dots for qualified names (table.column)
-  if (/^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*$/.test(identifier)) {
-    // Check if any part is a reserved keyword
-    const parts = identifier.split('.');
-    const needsQuoting = parts.some(part => RESERVED_KEYWORDS.has(part.toLowerCase()));
-
-    if (needsQuoting) {
-      // Quote each part that needs it
-      const quotedParts = parts.map(part =>
-        RESERVED_KEYWORDS.has(part.toLowerCase()) ? `"${part}"` : part
-      );
-      return quotedParts.join('.');
-    }
-
-    // Return unquoted for backward compatibility (valid identifiers are safe)
-    return identifier;
-  }
-
-  // For special characters (like hyphens, Unicode), quote the identifier
-  // The identifier has already been checked for SQL injection above
-  return `"${identifier.replace(/"/g, '""')}"`;
-}
-
-/**
- * Extract column names from a table type
- */
-/**
- * JSON operators supported by PostgreSQL
- */
-type JSONOperator =
-  | "->"   // Get JSON object field as JSON
-  | "->>"  // Get JSON object field as text
-  | "#>"   // Get JSON object at specified path as JSON
-  | "#>>"  // Get JSON object at specified path as text
-  | "@>"   // Contains JSON
-  | "<@"   // Is contained by JSON
-  | "?"    // Does key/element exist
-  | "?|"   // Do any of these array strings exist as top-level keys
-  | "?&"   // Do all of these array strings exist as top-level keys
-  | "@?"   // JSONPath match
-  | "@@";  // JSONPath predicate match
-
-/**
- * JSON path expression (e.g. '{a,b,c}' or '$.a.b.c')
- */
-type JSONPath = string[] | string;
-
-/**
- * JSON value types that can be used in queries
- */
-type JSONValue = Record<string, any> | any[] | string | number | boolean | null;
-
-/**
- * Type-safe JSON path builder for nested object access
- * Extracts the type at a given path in a JSON object
- */
-type JSONPathType<T, Path extends readonly (string | number)[]> =
-  Path extends readonly [infer First, ...infer Rest] ?
-    First extends keyof T ?
-      Rest extends readonly (string | number)[] ?
-        JSONPathType<T[First], Rest> :
-        T[First] :
-      any :
-    T;
-
-/**
- * Type-safe JSON field accessor
- */
-type JSONField<T> = T extends Record<string, any> ? keyof T : never;
-
-type ColumnNames<T> = keyof T & string;
-
-/**
- * Column alias configuration (strongly typed)
- */
-type ColumnAlias<T, K extends keyof T = keyof T> = {
-  column: K;
-  as: string;
-};
-
-/**
- * Expression alias for aggregate functions, calculations, etc.
- * These expressions return 'any' type since we can't infer their result type
- */
-type ExpressionAlias = {
-  column: string;
-  as: string;
-};
-
-/**
- * Column specification that allows both simple column names and complex expressions
- */
-type ColumnSpec<T> = keyof T | string | ColumnAlias<T, keyof T> | ExpressionAlias;
-
-/**
- * Helper type to distinguish between typed column aliases and expression aliases
- */
-type IsTypedAlias<T, A> = A extends { column: keyof T } ? true : false;
-
-/**
- * Helper functions for creating typed column specifications
- * These provide better type inference when used with select()
- */
-
-/**
- * Create a typed column alias
- * Usage: select(col("firstName", "name"), col("lastName", "surname"))
- */
-export function col<T, K extends keyof T>(column: K, as: string): ColumnAlias<T, K> {
-  return { column, as };
-}
-
-/**
- * Create an expression alias for aggregate functions or calculations
- * Usage: select(expr("COUNT(*)", "total"), expr("AVG(age)", "averageAge"))
- */
-export function expr(expression: string, as: string): ExpressionAlias {
-  return { column: expression, as };
-}
-
-/**
- * Extract the result type from a mix of column names and aliases
- * Improved to better handle string expressions while maintaining type safety
- */
-type ResultColumns<T, S extends ColumnSpec<T>[]> = {
-  [K in S[number] as
-    K extends { as: infer A extends string } ? A :
-    K extends keyof T ? K :
-    K extends string ? K :
-    never
-  ]:
-    K extends { column: infer C } ?
-      C extends keyof T ? T[C] :
-      C extends string ? any :
-      never :
-    K extends keyof T ? T[K] :
-    K extends string ? any :
-    never
-};
-
-/**
- * Pick specific columns from a table
- */
-type SelectColumns<T, K extends keyof T & string> = Pick<T, K>;
-
-/**
- * Join configuration interface
- */
-interface JoinCondition {
-  leftColumn: string;
-  rightColumn: string;
-}
-
-interface JoinConfig {
-  type: "INNER" | "LEFT" | "RIGHT" | "FULL";
-  table: string;
-  conditions: JoinCondition[];
-  alias?: string;
-}
+// Import error handling
+import { DatabaseError, isTransientError } from './errors';
 
 /**
  * Type-safe query builder for a specific table
@@ -1398,9 +874,8 @@ export class TypedQuery<
 
   /**
    * Sanitize SQL identifier to prevent injection
-   * Uses the shared RESERVED_KEYWORDS set defined at module level
+   * Uses the imported sanitizeSqlIdentifier function from utils
    */
-
   private sanitizeIdentifier(identifier: string, allowComplexExpressions: boolean = false): string {
     // If complex expressions are allowed (like JSON operators or aggregate functions), skip sanitization
     // This is used when the column is already a validated expression like data->>'field'
@@ -1413,52 +888,8 @@ export class TypedQuery<
       return identifier;
     }
 
-    // If identifier is already quoted, validate and return it
-    if (identifier.startsWith('"') && identifier.endsWith('"')) {
-      const unquoted = identifier.slice(1, -1);
-      // Check for SQL injection in quoted identifiers (excluding properly escaped quotes)
-      // PostgreSQL uses "" to escape quotes, so we need to check for dangerous patterns
-      // without flagging properly escaped quotes
-      if (/[;'\\]|--|\*\/|\/\*/.test(unquoted)) {
-        throw new Error(`Invalid SQL identifier: ${identifier}`);
-      }
-      // Check for unescaped double quotes by replacing all "" pairs and seeing if any " remain
-      // Properly escaped quotes come in pairs: "" is ok, but a single " is not
-      const withoutEscapedQuotes = unquoted.replace(/""/g, '');
-      if (withoutEscapedQuotes.includes('"')) {
-        throw new Error(`Invalid SQL identifier: ${identifier}`);
-      }
-      // Return as-is since it's already properly quoted
-      return identifier;
-    }
-
-    // Block obvious SQL injection attempts (semicolons, comments, quotes, backslashes)
-    if (/[;'"\\]|--|\*\/|\/\*/.test(identifier)) {
-      throw new Error(`Invalid SQL identifier: ${identifier}`);
-    }
-
-    // Standard SQL identifiers: alphanumeric and underscore, starting with letter or underscore
-    // This pattern also allows dots for qualified names (table.column)
-    if (/^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*$/.test(identifier)) {
-      // Check if any part is a reserved keyword
-      const parts = identifier.split('.');
-      const needsQuoting = parts.some(part => RESERVED_KEYWORDS.has(part.toLowerCase()));
-
-      if (needsQuoting) {
-        // Quote each part that needs it
-        const quotedParts = parts.map(part =>
-          RESERVED_KEYWORDS.has(part.toLowerCase()) ? `"${part}"` : part
-        );
-        return quotedParts.join('.');
-      }
-
-      // Return unquoted for backward compatibility (valid identifiers are safe)
-      return identifier;
-    }
-
-    // For special characters (like hyphens, Unicode), quote the identifier
-    // The identifier has already been checked for SQL injection above
-    return `"${identifier.replace(/"/g, '""')}"`;
+    // Delegate to the utility function for standard identifier sanitization
+    return sanitizeSqlIdentifier(identifier);
   }
 
   /**
@@ -2566,3 +1997,39 @@ export function createTypedPg<
 
 // Re-export Pool type for convenience
 export { Pool } from "pg";
+
+// Re-export types from types module
+export type {
+  QueryLogEntry,
+  LogLevel,
+  QueryLogger,
+  SecurityOptions,
+  TypedPgOptions,
+  ErrorContext,
+  JSONOperator,
+  JSONPath,
+  JSONValue,
+  JSONPathType,
+  JSONField,
+  ColumnNames,
+  ColumnAlias,
+  ExpressionAlias,
+  ColumnSpec,
+  IsTypedAlias,
+  ResultColumns,
+  SelectColumns,
+  JoinCondition,
+  JoinConfig,
+} from './types';
+
+// Re-export helper functions from types
+export { col, expr } from './types';
+
+// Re-export utilities
+export { stripSqlComments, sanitizeSqlIdentifier, validateQueryComplexity } from './utils';
+
+// Re-export error handling
+export { DatabaseError, isTransientError } from './errors';
+
+// Re-export logger
+export { ConsoleLogger } from './logger';
