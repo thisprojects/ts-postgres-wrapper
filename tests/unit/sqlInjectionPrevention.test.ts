@@ -320,7 +320,7 @@ describe("SQL Injection Prevention", () => {
       interface ReservedSchema {
         products: {
           id: number;
-          key: string;  // 'key' is a reserved keyword
+          select: string;  // 'select' is a reserved keyword
           value: number;
         };
       }
@@ -330,10 +330,10 @@ describe("SQL Injection Prevention", () => {
         "products"
       );
 
-      await query.where("key", "=", "test").execute();
+      await query.where("select", "=", "test").execute();
 
       const executedQuery = mockPool.getLastQuery();
-      expect(executedQuery.text).toContain('"key"');
+      expect(executedQuery.text).toContain('"select"');
     });
 
     it("should handle reserved keywords in ORDER BY", async () => {

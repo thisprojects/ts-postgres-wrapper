@@ -328,17 +328,38 @@ export class ConsoleLogger implements QueryLogger {
 }
 
 /**
- * PostgreSQL reserved keywords that must be quoted
+ * PostgreSQL reserved keywords that must be quoted when used as identifiers
+ * Source: PostgreSQL 16 official documentation
+ * This list includes:
+ * 1. Strictly reserved keywords (cannot be used as identifiers without quoting)
+ * 2. Commonly problematic keywords that often cause issues
+ *
+ * Note: This is a conservative list focused on keywords that MUST be quoted.
+ * Many PostgreSQL keywords are non-reserved and can be used unquoted, but
+ * we include the most commonly used SQL keywords for safety.
  */
 const RESERVED_KEYWORDS = new Set([
-  'select', 'from', 'where', 'insert', 'update', 'delete', 'drop', 'table', 'create',
-  'alter', 'join', 'inner', 'outer', 'left', 'right', 'full', 'cross', 'on', 'using',
-  'and', 'or', 'not', 'in', 'is', 'null', 'like', 'between', 'exists', 'case', 'when',
-  'then', 'else', 'end', 'union', 'intersect', 'except', 'order', 'by', 'group', 'having',
-  'limit', 'offset', 'distinct', 'all', 'as', 'into', 'values', 'set', 'default',
-  'constraint', 'primary', 'foreign', 'key', 'references', 'check', 'unique', 'index',
-  'user', 'current_user', 'session_user', 'current_date', 'current_time', 'current_timestamp',
-  'true', 'false', 'unknown', 'array', 'cascade', 'restrict', 'grant', 'revoke'
+  // Strictly reserved keywords in PostgreSQL (cannot be used as identifiers without quoting)
+  // Based on PostgreSQL official documentation
+  'all', 'analyse', 'analyze', 'and', 'any', 'array', 'as', 'asc', 'asymmetric',
+  'both', 'case', 'cast', 'check', 'collate', 'constraint', 'create',
+  'current_catalog', 'current_date', 'current_role', 'current_time',
+  'current_timestamp', 'current_user', 'default', 'deferrable', 'desc',
+  'distinct', 'do', 'else', 'end', 'except', 'false', 'fetch', 'for',
+  'foreign', 'from', 'grant', 'group', 'having', 'in', 'initially',
+  'intersect', 'into', 'lateral', 'leading', 'limit', 'localtime',
+  'localtimestamp', 'not', 'null', 'offset', 'on', 'only', 'or',
+  'order', 'placing', 'primary', 'references', 'returning', 'select',
+  'session_user', 'some', 'symmetric', 'table', 'then', 'to', 'trailing',
+  'true', 'union', 'unique', 'user', 'using', 'variadic', 'when', 'where',
+  'window', 'with',
+
+  // Common SQL keywords that should be quoted (DML/DDL)
+  'alter', 'begin', 'commit', 'delete', 'drop', 'insert', 'merge', 'rollback',
+  'truncate', 'update',
+
+  // JOIN keywords
+  'cross', 'full', 'inner', 'join', 'left', 'natural', 'outer', 'right'
 ]);
 
 /**
@@ -1377,18 +1398,8 @@ export class TypedQuery<
 
   /**
    * Sanitize SQL identifier to prevent injection
+   * Uses the shared RESERVED_KEYWORDS set defined at module level
    */
-  // PostgreSQL reserved keywords that must be quoted
-  private static readonly RESERVED_KEYWORDS = new Set([
-    'select', 'from', 'where', 'insert', 'update', 'delete', 'drop', 'table', 'create',
-    'alter', 'join', 'inner', 'outer', 'left', 'right', 'full', 'cross', 'on', 'using',
-    'and', 'or', 'not', 'in', 'is', 'null', 'like', 'between', 'exists', 'case', 'when',
-    'then', 'else', 'end', 'union', 'intersect', 'except', 'order', 'by', 'group', 'having',
-    'limit', 'offset', 'distinct', 'all', 'as', 'into', 'values', 'set', 'default',
-    'constraint', 'primary', 'foreign', 'key', 'references', 'check', 'unique', 'index',
-    'user', 'current_user', 'session_user', 'current_date', 'current_time', 'current_timestamp',
-    'true', 'false', 'unknown', 'array', 'cascade', 'restrict', 'grant', 'revoke'
-  ]);
 
   private sanitizeIdentifier(identifier: string, allowComplexExpressions: boolean = false): string {
     // If complex expressions are allowed (like JSON operators or aggregate functions), skip sanitization
@@ -1431,12 +1442,12 @@ export class TypedQuery<
     if (/^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*$/.test(identifier)) {
       // Check if any part is a reserved keyword
       const parts = identifier.split('.');
-      const needsQuoting = parts.some(part => TypedQuery.RESERVED_KEYWORDS.has(part.toLowerCase()));
+      const needsQuoting = parts.some(part => RESERVED_KEYWORDS.has(part.toLowerCase()));
 
       if (needsQuoting) {
         // Quote each part that needs it
         const quotedParts = parts.map(part =>
-          TypedQuery.RESERVED_KEYWORDS.has(part.toLowerCase()) ? `"${part}"` : part
+          RESERVED_KEYWORDS.has(part.toLowerCase()) ? `"${part}"` : part
         );
         return quotedParts.join('.');
       }
