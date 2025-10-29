@@ -1,4 +1,4 @@
-import { TypedQuery, TypedPg } from "../../src/index";
+import { TypedQuery, TypedPg, expr } from "../../src/index";
 import { MockPool, TestSchema, createMockUser } from "../test_utils";
 
 describe("TypedQuery", () => {
@@ -974,7 +974,7 @@ describe("TypedQuery", () => {
           "users.id",
           "users.name",
           "posts.title",
-          "ROW_NUMBER() OVER (PARTITION BY users.id ORDER BY posts.created_at DESC) AS post_number"
+          expr("ROW_NUMBER() OVER (PARTITION BY users.id ORDER BY posts.created_at DESC)", "post_number")
         )
         .innerJoin("posts", "users.id", "posts.user_id")
         .execute();
@@ -1016,7 +1016,7 @@ describe("TypedQuery", () => {
         "users"
       );
       await query
-        .select("department", "COUNT(*) AS user_count")
+        .select("department", expr("COUNT(*)", "user_count"))
         .groupBy("department")
         .execute();
 
@@ -1033,7 +1033,7 @@ describe("TypedQuery", () => {
         "users"
       );
       await query
-        .select("department", "COUNT(*) AS user_count")
+        .select("department", expr("COUNT(*)", "user_count"))
         .where("active", "=", true)
         .groupBy("department")
         .execute();
@@ -1052,7 +1052,7 @@ describe("TypedQuery", () => {
         "users"
       );
       await query
-        .select("department", "role", "COUNT(*) AS user_count")
+        .select("department", "role", expr("COUNT(*)", "user_count"))
         .groupBy("department", "role")
         .execute();
 
@@ -1069,7 +1069,7 @@ describe("TypedQuery", () => {
         "users"
       );
       await query
-        .select("department", "COUNT(*) AS user_count")
+        .select("department", expr("COUNT(*)", "user_count"))
         .groupBy("department")
         .having("COUNT(*)", ">", 5)
         .execute();
@@ -1088,7 +1088,7 @@ describe("TypedQuery", () => {
         "users"
       );
       await query
-        .select("department", "COUNT(*) AS user_count", "AVG(age) AS avg_age")
+        .select("department", expr("COUNT(*)", "user_count"), expr("AVG(age)", "avg_age"))
         .groupBy("department")
         .having("COUNT(*)", ">", 5)
         .having("AVG(age)", ">=", 30)
@@ -1108,7 +1108,7 @@ describe("TypedQuery", () => {
         "users"
       );
       await query
-        .select("users.department", "COUNT(DISTINCT posts.id) AS post_count")
+        .select("users.department", expr("COUNT(DISTINCT posts.id)", "post_count"))
         .innerJoin("posts", "users.id", "posts.user_id")
         .groupBy("users.department")
         .having("COUNT(DISTINCT posts.id)", ">", 10)
@@ -1128,7 +1128,7 @@ describe("TypedQuery", () => {
         "users"
       );
       await query
-        .select("department", "COUNT(*) AS user_count")
+        .select("department", expr("COUNT(*)", "user_count"))
         .groupBy("department")
         .orderBy("user_count", "DESC")
         .execute();
@@ -1146,7 +1146,7 @@ describe("TypedQuery", () => {
         "users"
       );
       await query
-        .select("department", "COUNT(*) AS user_count")
+        .select("department", expr("COUNT(*)", "user_count"))
         .groupBy("department")
         .having("COUNT(*)", ">", 10)
         .orderBy("user_count", "DESC")
@@ -1166,7 +1166,7 @@ describe("TypedQuery", () => {
         "users"
       );
       await query
-        .select("department", "COUNT(*) AS user_count")
+        .select("department", expr("COUNT(*)", "user_count"))
         .groupBy("department")
         .orderBy("user_count", "DESC")
         .limit(5)
@@ -1186,7 +1186,7 @@ describe("TypedQuery", () => {
         "users"
       );
       await query
-        .select("department", "COUNT(*) AS user_count")
+        .select("department", expr("COUNT(*)", "user_count"))
         .groupBy("department")
         .having("COUNT(*)", "IN", [5, 10, 15])
         .execute();
@@ -1207,7 +1207,7 @@ describe("TypedQuery", () => {
 
       await expect(async () => {
         await query
-          .select("department", "COUNT(*) AS user_count")
+          .select("department", expr("COUNT(*)", "user_count"))
           .having("COUNT(*)", ">", 5)
           .execute();
       }).rejects.toThrow("HAVING clause requires GROUP BY");

@@ -51,7 +51,7 @@ describe("Data Safety", () => {
         await query
           .select("id", "name; DROP TABLE users; --" as any)
           .execute();
-      }).rejects.toThrow("Invalid SQL identifier");
+      }).rejects.toThrow("Invalid column name");
     });
 
     it("should safely handle malicious input in IN clause", async () => {
