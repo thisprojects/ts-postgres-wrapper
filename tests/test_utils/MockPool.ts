@@ -7,6 +7,7 @@ export class MockPool {
   private queryIndex: number = 0;
   public queryLog: Array<{ text: string; values: any[] }> = [];
   private eventListeners: Map<string, Function[]> = new Map();
+  private mockError: Error | null = null;
 
   constructor() {}
 
@@ -61,6 +62,21 @@ export class MockPool {
       this.mockResultsQueue = [];
       this.queryIndex = 0;
     }
+    this.mockError = null; // Clear any previous error
+  }
+
+  /**
+   * Set a mock error that will be thrown by query() calls
+   */
+  setMockError(error: Error) {
+    this.mockError = error;
+  }
+
+  /**
+   * Clear the mock error
+   */
+  clearMockError() {
+    this.mockError = null;
   }
 
   /**
@@ -104,6 +120,11 @@ export class MockPool {
       value instanceof Date ? value.toISOString() : value
     );
     this.queryLog.push({ text, values: normalizedValues });
+
+    // If a mock error is set, throw it
+    if (this.mockError) {
+      throw this.mockError;
+    }
 
     // If we have a queue of results, return them sequentially
     if (this.mockResultsQueue.length > 0) {

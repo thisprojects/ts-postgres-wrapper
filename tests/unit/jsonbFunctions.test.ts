@@ -43,7 +43,7 @@ describe("JSONB Functions", () => {
         .execute();
 
       const executedQuery = pool.getLastQuery();
-      expect(executedQuery.text).toContain("jsonb_set(profile, '{address,city}', '\"San Francisco\"', true)");
+      expect(executedQuery.text).toContain("jsonb_set(profile, '{address,city}', '\"San Francisco\"'::jsonb, true)");
     });
 
     it("should update with createMissing=false", async () => {
@@ -54,7 +54,7 @@ describe("JSONB Functions", () => {
         .execute();
 
       const executedQuery = pool.getLastQuery();
-      expect(executedQuery.text).toContain("jsonb_set(profile, '{newField}', '\"value\"', false)");
+      expect(executedQuery.text).toContain("jsonb_set(profile, '{newField}', '\"value\"'::jsonb, false)");
     });
 
     it("should update with object values", async () => {
@@ -66,7 +66,7 @@ describe("JSONB Functions", () => {
         .execute();
 
       const executedQuery = pool.getLastQuery();
-      expect(executedQuery.text).toContain(`jsonb_set(profile, '{address}', '${JSON.stringify(newAddress)}', true)`);
+      expect(executedQuery.text).toContain(`jsonb_set(profile, '{address}', '${JSON.stringify(newAddress)}'::jsonb, true)`);
     });
   });
 
@@ -79,7 +79,7 @@ describe("JSONB Functions", () => {
         .execute();
 
       const executedQuery = pool.getLastQuery();
-      expect(executedQuery.text).toContain("jsonb_insert(profile, '{tags,0}', '\"new-tag\"', false)");
+      expect(executedQuery.text).toContain("jsonb_insert(profile, '{tags,0}', '\"new-tag\"'::jsonb, false)");
     });
 
     it("should insert after with insertAfter=true", async () => {
@@ -90,7 +90,7 @@ describe("JSONB Functions", () => {
         .execute();
 
       const executedQuery = pool.getLastQuery();
-      expect(executedQuery.text).toContain("jsonb_insert(profile, '{tags,1}', '\"tag\"', true)");
+      expect(executedQuery.text).toContain("jsonb_insert(profile, '{tags,1}', '\"tag\"'::jsonb, true)");
     });
   });
 
@@ -350,6 +350,112 @@ describe("JSONB Functions", () => {
 
       const executedQuery = pool.getLastQuery();
       expect(executedQuery.text).toContain("profile#>ARRAY['tags','0']");
+    });
+
+    it("should escape single quotes in jsonbSet to prevent SQL injection", async () => {
+      const maliciousValue = "value'; DROP TABLE users; --";
+      const updateExpr = query.jsonbSet("profile", ["note"], maliciousValue);
+
+      await query
+        .select({ column: updateExpr, as: "updated" })
+        .execute();
+
+      const executedQuery = pool.getLastQuery();
+      // Single quotes should be escaped with double single quotes
+      expect(executedQuery.text).toContain("value''; DROP TABLE users; --");
+      // The escaped quotes make it safe - verify the full escaped sequence
+      expect(executedQuery.text).toContain("'\"value''; DROP TABLE users; --\"'::jsonb");
+    });
+
+    it("should escape single quotes in jsonbInsert to prevent SQL injection", async () => {
+      const maliciousValue = "tag'; DELETE FROM posts WHERE 'x'='x";
+      const insertExpr = query.jsonbInsert("profile", ["tags", "0"], maliciousValue);
+
+      await query
+        .select({ column: insertExpr, as: "updated" })
+        .execute();
+
+      const executedQuery = pool.getLastQuery();
+      // Single quotes should be escaped
+      expect(executedQuery.text).toContain("tag''; DELETE FROM");
+      expect(executedQuery.text).toContain("WHERE ''x''=''x");
+    });
+
+    it("should escape single quotes in jsonbConcat to prevent SQL injection", async () => {
+      const maliciousObj = { field: "value'; DROP TABLE logs; --" };
+      const concatExpr = query.jsonbConcat("profile", maliciousObj);
+
+      await query
+        .select({ column: concatExpr, as: "updated" })
+        .execute();
+
+      const executedQuery = pool.getLastQuery();
+      // Single quotes in the JSON should be escaped
+      expect(executedQuery.text).toContain("value''; DROP TABLE logs; --");
+      // Verify the full escaped JSON string with ::jsonb cast
+      expect(executedQuery.text).toContain("'{\"field\":\"value''; DROP TABLE logs; --\"}'::jsonb");
+    });
+
+    it("should escape single quotes in jsonbBuildObject to prevent SQL injection", async () => {
+      const maliciousData = { key: "value'; TRUNCATE TABLE audit; --" };
+      const buildExpr = query.jsonbBuildObject(maliciousData);
+
+      await query
+        .select({ column: buildExpr, as: "built" })
+        .execute();
+
+      const executedQuery = pool.getLastQuery();
+      // Single quotes in string values should be escaped
+      expect(executedQuery.text).toContain("value''; TRUNCATE TABLE audit; --");
+    });
+
+    it("should escape single quotes in jsonbBuildArray to prevent SQL injection", async () => {
+      const maliciousArray = ["item1", "item2'; DELETE FROM users; --", "item3"];
+      const buildExpr = query.jsonbBuildArray(maliciousArray);
+
+      await query
+        .select({ column: buildExpr, as: "built" })
+        .execute();
+
+      const executedQuery = pool.getLastQuery();
+      // Single quotes should be escaped
+      expect(executedQuery.text).toContain("item2''; DELETE FROM users; --");
+    });
+
+    it("should handle nested objects with single quotes in jsonbBuildObject", async () => {
+      const nestedData = {
+        user: { name: "O'Brien", note: "It's a test" },
+        comment: "Don't panic"
+      };
+      const buildExpr = query.jsonbBuildObject(nestedData);
+
+      await query
+        .select({ column: buildExpr, as: "built" })
+        .execute();
+
+      const executedQuery = pool.getLastQuery();
+      // All single quotes should be properly escaped
+      expect(executedQuery.text).toContain("O''Brien");
+      expect(executedQuery.text).toContain("It''s");
+      expect(executedQuery.text).toContain("Don''t");
+    });
+
+    it("should handle nested objects in jsonbBuildArray", async () => {
+      const nestedArray = [
+        { name: "Test" },
+        { desc: "It's working" },
+        42
+      ];
+      const buildExpr = query.jsonbBuildArray(nestedArray);
+
+      await query
+        .select({ column: buildExpr, as: "built" })
+        .execute();
+
+      const executedQuery = pool.getLastQuery();
+      // Objects should be JSON-stringified and single quotes escaped
+      expect(executedQuery.text).toContain("It''s working");
+      expect(executedQuery.text).toContain("::jsonb");
     });
   });
 });

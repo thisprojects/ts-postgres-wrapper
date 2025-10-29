@@ -196,4 +196,64 @@ describe("TypedPg Transaction Tests", () => {
 
     expect(errorPool.release).not.toHaveBeenCalled();
   });
+
+  it("should preserve options/logger in transaction context", async () => {
+    const logEntries: any[] = [];
+    const testLogger = {
+      log: (level: string, entry: any) => {
+        logEntries.push({ level, entry });
+      }
+    };
+
+    const onErrorMock = jest.fn();
+    const options = {
+      logger: testLogger,
+      timeout: 5000,
+      retryAttempts: 2,
+      retryDelay: 500,
+      onError: onErrorMock,
+      security: {
+        maxBatchSize: 1000,
+        maxJoinDepth: 5,
+        rateLimitBatch: true,
+        batchRateLimit: 10,
+      }
+    };
+
+    const dbWithOptions = new TypedPg<TestSchema>(mockPool as any, undefined, options);
+    const mockUser = createMockUser();
+    mockPool.setMockResults([mockUser]);
+
+    await dbWithOptions.transaction(async (trx) => {
+      // Verify all options are preserved in transaction
+      const txOptions = trx.getOptions();
+      expect(txOptions).toMatchObject({
+        logger: testLogger,
+        timeout: 5000,
+        retryAttempts: 2,
+        retryDelay: 500,
+        onError: onErrorMock,
+      });
+      expect(txOptions.security).toMatchObject({
+        maxBatchSize: 1000,
+        maxJoinDepth: 5,
+        rateLimitBatch: true,
+        batchRateLimit: 10,
+      });
+      expect(trx.getLogger()).toBe(testLogger);
+
+      await trx.insert("users", {
+        name: "Test",
+        email: "test@example.com",
+        age: 30,
+        active: true,
+      });
+    });
+
+    // Verify logger was used in transaction
+    expect(logEntries.length).toBeGreaterThan(0);
+    const insertLog = logEntries.find(e => e.entry.query.includes("INSERT INTO"));
+    expect(insertLog).toBeDefined();
+    expect(insertLog.level).toBe("debug");
+  });
 });

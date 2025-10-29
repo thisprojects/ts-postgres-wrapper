@@ -442,4 +442,139 @@ describe("SQL Injection Prevention", () => {
       }).rejects.toThrow("Invalid SQL identifier");
     });
   });
+
+  describe("Complex expression injection prevention", () => {
+    it("should prevent injection in complex expressions via semicolon", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      // Try to inject SQL via complex expression
+      await expect(async () => {
+        await query.select("COUNT(*) ; DROP TABLE x; --").execute();
+      }).rejects.toThrow("Invalid SQL identifier");
+    });
+
+    it("should prevent injection in complex expressions via comment markers", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query.select("COUNT(*) -- comment").execute();
+      }).rejects.toThrow("Invalid SQL identifier");
+
+      await expect(async () => {
+        await query.select("COUNT(*) /* comment */").execute();
+      }).rejects.toThrow("Invalid SQL identifier");
+    });
+
+    it("should prevent injection in complex expressions via quotes", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query.select("COUNT(*) ' OR '1'='1").execute();
+      }).rejects.toThrow("Invalid SQL identifier");
+
+      await expect(async () => {
+        await query.select('COUNT(*) " OR 1=1 --').execute();
+      }).rejects.toThrow("Invalid SQL identifier");
+    });
+
+    it("should prevent injection in complex expressions via backslash", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query.select("COUNT(*) \\ DROP TABLE users").execute();
+      }).rejects.toThrow("Invalid SQL identifier");
+    });
+
+    it("should prevent injection in subqueries via semicolon", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query.select("(SELECT id FROM users); DROP TABLE x; --").execute();
+      }).rejects.toThrow(/Invalid SQL (identifier|subquery)/);
+    });
+
+    it("should prevent injection in subqueries via comment markers", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query.select("(SELECT id FROM users) -- drop table").execute();
+      }).rejects.toThrow(/Invalid SQL (identifier|subquery)/);
+
+      await expect(async () => {
+        await query.select("(SELECT id FROM users) /* malicious */").execute();
+      }).rejects.toThrow(/Invalid SQL (identifier|subquery)/);
+    });
+
+    it("should prevent injection in subqueries via quotes", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query.select("(SELECT id FROM users WHERE name = 'x' OR '1'='1')").execute();
+      }).rejects.toThrow(/Invalid SQL (identifier|subquery)/);
+    });
+
+    it("should allow legitimate aggregate functions", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      // These should work - no injection patterns
+      await query.select("COUNT(*)").execute();
+      let executedQuery = mockPool.getLastQuery();
+      expect(executedQuery.text).toContain("COUNT(*)");
+
+      await query.select("MAX(id)").execute();
+      executedQuery = mockPool.getLastQuery();
+      expect(executedQuery.text).toContain("MAX(id)");
+
+      await query.select("SUM(id)").execute();
+      executedQuery = mockPool.getLastQuery();
+      expect(executedQuery.text).toContain("SUM(id)");
+    });
+
+    it("should allow legitimate JSON operators", async () => {
+      interface JsonSchema {
+        data: {
+          id: number;
+          metadata: { type: string };
+        };
+      }
+
+      const query = new TypedQuery<"data", JsonSchema["data"]>(
+        mockPool as any,
+        "data"
+      );
+
+      // Legitimate JSON operators should work
+      await query.select("metadata->type").execute();
+      let executedQuery = mockPool.getLastQuery();
+      expect(executedQuery.text).toContain("metadata->type");
+
+      await query.select("metadata->>type").execute();
+      executedQuery = mockPool.getLastQuery();
+      expect(executedQuery.text).toContain("metadata->>type");
+    });
+  });
 });
