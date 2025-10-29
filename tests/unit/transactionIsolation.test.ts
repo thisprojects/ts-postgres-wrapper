@@ -328,7 +328,7 @@ describe("Transaction Isolation", () => {
       expect(queries[0].text).toBe("BEGIN READ ONLY");
     });
 
-    it("should support DEFERRABLE transactions", async () => {
+    it("should support DEFERRABLE transactions (requires SERIALIZABLE + READ ONLY)", async () => {
       const mockClient = {
         query: mockPool.query.bind(mockPool),
         release: jest.fn(),
@@ -339,10 +339,14 @@ describe("Transaction Isolation", () => {
 
       await db.transaction(async (tx) => {
         await tx.table("users").where("id", "=", 1).execute();
-      }, { deferrable: true });
+      }, {
+        isolationLevel: 'SERIALIZABLE',
+        readOnly: true,
+        deferrable: true
+      });
 
       const queries = mockPool.getQueryLog();
-      expect(queries[0].text).toBe("BEGIN DEFERRABLE");
+      expect(queries[0].text).toBe("BEGIN ISOLATION LEVEL SERIALIZABLE READ ONLY DEFERRABLE");
     });
 
     it("should support combination of isolation level, read-only, and deferrable", async () => {
@@ -388,6 +392,66 @@ describe("Transaction Isolation", () => {
       const queries = mockPool.getQueryLog();
       expect(queries[0].text).toBe("BEGIN ISOLATION LEVEL SERIALIZABLE");
       expect(queries[queries.length - 1].text).toBe("ROLLBACK");
+      expect(mockClient.release).toHaveBeenCalled();
+    });
+
+    it("should reject DEFERRABLE without SERIALIZABLE isolation level", async () => {
+      const mockClient = {
+        query: mockPool.query.bind(mockPool),
+        release: jest.fn(),
+        connect: jest.fn(function() { return Promise.resolve(this); })
+      };
+      mockPool.connect = jest.fn().mockResolvedValue(mockClient);
+
+      await expect(db.transaction(async (tx) => {
+        await tx.table("users").execute();
+      }, {
+        isolationLevel: 'READ COMMITTED',
+        readOnly: true,
+        deferrable: true
+      })).rejects.toThrow("DEFERRABLE can only be used with SERIALIZABLE and READ ONLY transactions");
+
+      expect(mockClient.release).toHaveBeenCalled();
+    });
+
+    it("should reject DEFERRABLE without READ ONLY", async () => {
+      const mockClient = {
+        query: mockPool.query.bind(mockPool),
+        release: jest.fn(),
+        connect: jest.fn(function() { return Promise.resolve(this); })
+      };
+      mockPool.connect = jest.fn().mockResolvedValue(mockClient);
+
+      await expect(db.transaction(async (tx) => {
+        await tx.insert("users", {
+          name: "Test User",
+          email: "test@example.com",
+          age: 30,
+          active: true,
+          created_at: new Date()
+        });
+      }, {
+        isolationLevel: 'SERIALIZABLE',
+        deferrable: true
+      })).rejects.toThrow("DEFERRABLE can only be used with SERIALIZABLE and READ ONLY transactions");
+
+      expect(mockClient.release).toHaveBeenCalled();
+    });
+
+    it("should reject DEFERRABLE without both SERIALIZABLE and READ ONLY", async () => {
+      const mockClient = {
+        query: mockPool.query.bind(mockPool),
+        release: jest.fn(),
+        connect: jest.fn(function() { return Promise.resolve(this); })
+      };
+      mockPool.connect = jest.fn().mockResolvedValue(mockClient);
+
+      await expect(db.transaction(async (tx) => {
+        await tx.table("users").execute();
+      }, {
+        deferrable: true
+      })).rejects.toThrow("DEFERRABLE can only be used with SERIALIZABLE and READ ONLY transactions");
+
       expect(mockClient.release).toHaveBeenCalled();
     });
   });

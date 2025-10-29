@@ -536,6 +536,13 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
 
         // Add deferrable mode (only valid with SERIALIZABLE and READ ONLY)
         if (options.deferrable) {
+          if (options.isolationLevel !== 'SERIALIZABLE' || !options.readOnly) {
+            throw new DatabaseError(
+              'DEFERRABLE can only be used with SERIALIZABLE and READ ONLY transactions',
+              'INVALID_TRANSACTION_OPTIONS',
+              { query: 'BEGIN', params: [], operation: 'transaction' }
+            );
+          }
           parts.push("DEFERRABLE");
         }
 
