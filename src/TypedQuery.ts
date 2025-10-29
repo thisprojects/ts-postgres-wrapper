@@ -161,6 +161,8 @@ export class TypedQuery<
         return this.qualifyColumnName(col);
       } else {
         // Always sanitize column names, even in object syntax
+        // Object syntax goes through qualifyColumnName() which applies sanitizeIdentifier()
+        // with appropriate security checks for complex expressions
         const colExpr = this.qualifyColumnName(String(col.column));
         return `${colExpr} AS ${this.sanitizeIdentifier(col.as)}`;
       }
@@ -1397,6 +1399,7 @@ export class TypedQuery<
       {
         column: `MIN(${qualifiedColumn})`,
         as: "min",
+        __isExpression: true,
       } as const
     );
   }
@@ -1414,6 +1417,7 @@ export class TypedQuery<
       {
         column: `MAX(${qualifiedColumn})`,
         as: "max",
+        __isExpression: true,
       } as const
     );
   }
@@ -1431,6 +1435,7 @@ export class TypedQuery<
       {
         column: `SUM(${qualifiedColumn})`,
         as: "sum",
+        __isExpression: true,
       } as const
     );
   }
@@ -1449,6 +1454,7 @@ export class TypedQuery<
     ).select({
       column: `AVG(${qualifiedColumn})`,
       as: "avg",
+      __isExpression: true,
     } as const);
   }
 

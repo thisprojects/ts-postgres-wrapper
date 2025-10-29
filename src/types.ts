@@ -66,6 +66,7 @@ export type ColumnAlias<T, K extends keyof T = keyof T> = {
 export type ExpressionAlias = {
   column: string;
   as: string;
+  __isExpression?: true; // Marker to identify safe expressions from expr() helper
 };
 
 /**
@@ -258,5 +259,5 @@ export function col<T, K extends keyof T>(column: K, as: string): ColumnAlias<T,
  * Usage: select(expr("COUNT(*)", "total"), expr("AVG(age)", "averageAge"))
  */
 export function expr(expression: string, as: string): ExpressionAlias {
-  return { column: expression, as };
+  return { column: expression, as, __isExpression: true };
 }

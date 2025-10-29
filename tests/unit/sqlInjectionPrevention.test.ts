@@ -535,6 +535,36 @@ describe("SQL Injection Prevention", () => {
       const executedQuery = mockPool.getLastQuery();
       expect(executedQuery.text).toBe("SELECT users.id, users.name FROM users");
     });
+
+    it("should reject SQL injection in object syntax column names via sanitizeIdentifier", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      // Object syntax goes through sanitizeIdentifier which has its own SQL injection checks
+      await expect(async () => {
+        await query.select({ column: "id; DROP TABLE users--", as: "user_id" }).execute();
+      }).rejects.toThrow("Invalid SQL identifier");
+    });
+
+    it("should allow safe column names and expressions in object syntax", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      // Simple column names work
+      await query.select({ column: "id", as: "user_id" }, { column: "name", as: "user_name" }).execute();
+      let executedQuery = mockPool.getLastQuery();
+      expect(executedQuery.text).toBe("SELECT id AS user_id, name AS user_name FROM users");
+
+      // Expressions created by library functions work (they're sanitized by qualifyColumnName)
+      mockPool.clearQueryLog();
+      await query.select({ column: "COUNT(*)", as: "total" }).execute();
+      executedQuery = mockPool.getLastQuery();
+      expect(executedQuery.text).toBe("SELECT COUNT(*) AS total FROM users");
+    });
   });
 
   describe("Complex expression injection prevention", () => {
