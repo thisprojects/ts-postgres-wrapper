@@ -17,7 +17,7 @@ describe("table() with executeWithLogging integration", () => {
       const result = await db.table("users").where("id", "=", 1).execute();
 
       expect(result).toHaveLength(1);
-      expect(mockPool).toHaveExecutedQuery("SELECT * FROM users WHERE id = $1");
+      expect(mockPool.hasExecutedQuery("SELECT * FROM users WHERE id = $1")).toBe(true);
     });
 
     it("should use queryExecutor for count queries", async () => {
@@ -26,7 +26,7 @@ describe("table() with executeWithLogging integration", () => {
       const count = await db.table("users").count();
 
       expect(count).toBe(5);
-      expect(mockPool).toHaveExecutedQuery("SELECT COUNT(*) as count FROM users");
+      expect(mockPool.hasExecutedQuery("SELECT COUNT(*) as count FROM users")).toBe(true);
     });
   });
 
