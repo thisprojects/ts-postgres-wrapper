@@ -16,6 +16,12 @@ import { sanitizeSqlIdentifier } from "./utils";
 /**
  * Type-safe query builder for a specific table
  */
+export type QueryExecutor = <T = any>(
+  query: string,
+  params: any[],
+  operation?: string
+) => Promise<{ rows: T[] }>;
+
 export class TypedQuery<
   TableName extends string = string,
   Row extends Record<string, any> = Record<string, any>,
@@ -34,6 +40,7 @@ export class TypedQuery<
   private caseInsensitive: boolean = false;
   private joins: JoinConfig[] = [];
   private logger?: QueryLogger;
+  private queryExecutor?: QueryExecutor;
 
   /**
    * Make text comparisons case insensitive
@@ -63,13 +70,15 @@ export class TypedQuery<
     tableName: TableName,
     schema?: Schema,
     tableAlias?: string,
-    logger?: QueryLogger
+    logger?: QueryLogger,
+    queryExecutor?: QueryExecutor
   ) {
     this.pool = pool;
     this.tableName = tableName;
     this.tableAlias = tableAlias;
     this.schema = schema || ({} as Schema);
     this.logger = logger;
+    this.queryExecutor = queryExecutor;
     this.joinedTables.add(String(tableName));
   }
 
@@ -86,7 +95,8 @@ export class TypedQuery<
       this.tableName,
       this.schema,
       this.tableAlias,
-      this.logger
+      this.logger,
+      this.queryExecutor
     );
     newQuery.selectedColumns = [...this.selectedColumns];
     newQuery.whereClause = this.whereClause;
@@ -1266,10 +1276,16 @@ export class TypedQuery<
     const timestamp = new Date();
 
     try {
-      const result = await this.pool.query<Row>(query, params);
+      // Use queryExecutor if available (provides timeout, retry, security validation)
+      // Otherwise fall back to direct pool.query
+      const result = this.queryExecutor
+        ? await this.queryExecutor<Row>(query, params, "select")
+        : await this.pool.query<Row>(query, params);
+
       const duration = Date.now() - startTime;
 
-      if (this.logger) {
+      // Only log if using direct pool.query (queryExecutor logs internally)
+      if (!this.queryExecutor && this.logger) {
         this.logger.log("debug", {
           query,
           params,
@@ -1282,7 +1298,8 @@ export class TypedQuery<
     } catch (error) {
       const duration = Date.now() - startTime;
 
-      if (this.logger) {
+      // Only log if using direct pool.query (queryExecutor logs internally)
+      if (!this.queryExecutor && this.logger) {
         this.logger.log("error", {
           query,
           params,
@@ -1316,10 +1333,15 @@ export class TypedQuery<
     const timestamp = new Date();
 
     try {
-      const result = await this.pool.query<{ count: string }>(query, params);
+      // Use queryExecutor if available (provides timeout, retry, security validation)
+      const result = this.queryExecutor
+        ? await this.queryExecutor<{ count: string }>(query, params, "count")
+        : await this.pool.query<{ count: string }>(query, params);
+
       const duration = Date.now() - startTime;
 
-      if (this.logger) {
+      // Only log if using direct pool.query (queryExecutor logs internally)
+      if (!this.queryExecutor && this.logger) {
         this.logger.log("debug", {
           query,
           params,
@@ -1332,7 +1354,8 @@ export class TypedQuery<
     } catch (error) {
       const duration = Date.now() - startTime;
 
-      if (this.logger) {
+      // Only log if using direct pool.query (queryExecutor logs internally)
+      if (!this.queryExecutor && this.logger) {
         this.logger.log("error", {
           query,
           params,

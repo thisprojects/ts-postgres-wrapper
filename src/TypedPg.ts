@@ -276,7 +276,8 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
       tableName,
       this.schema,
       alias,
-      this.logger
+      this.logger,
+      this.executeWithLogging.bind(this)
     );
   }
 

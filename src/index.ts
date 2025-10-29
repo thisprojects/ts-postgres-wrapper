@@ -1,5 +1,5 @@
 // Re-export main classes
-export { TypedQuery } from "./TypedQuery";
+export { TypedQuery, type QueryExecutor } from "./TypedQuery";
 export { TypedPg, createTypedPg } from "./TypedPg";
 
 // Re-export Pool type for convenience
