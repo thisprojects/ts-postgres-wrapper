@@ -1,4 +1,4 @@
-import { TypedQuery } from "../../src";
+import { TypedQuery, expr } from "../../src";
 import { MockPool } from "../test_utils/MockPool";
 
 interface TestRow {
@@ -203,17 +203,17 @@ describe("JSON Operations", () => {
   describe("Aggregate Functions with JSON", () => {
     it("should aggregate JSON values", async () => {
       await query
-        .select([
-          "COUNT(*) FILTER (WHERE data->>'active' = 'true') as active_count",
-          "COUNT(*) FILTER (WHERE data->>'active' = 'false') as inactive_count",
-          "AVG((data->>'age')::int) as avg_age"
-        ].join(", "))
+        .select(
+          expr("COUNT(*) FILTER (WHERE data->>'active' = 'true')", "active_count"),
+          expr("COUNT(*) FILTER (WHERE data->>'active' = 'false')", "inactive_count"),
+          expr("AVG((data->>'age')::int)", "avg_age")
+        )
         .execute();
 
       expect(pool).toHaveExecutedQuery(
-        "SELECT COUNT(*) FILTER (WHERE data->>'active' = 'true') as active_count, " +
-        "COUNT(*) FILTER (WHERE data->>'active' = 'false') as inactive_count, " +
-        "AVG((data->>'age')::int) as avg_age FROM test_table"
+        "SELECT COUNT(*) FILTER (WHERE data->>'active' = 'true') AS active_count, " +
+        "COUNT(*) FILTER (WHERE data->>'active' = 'false') AS inactive_count, " +
+        "AVG((data->>'age')::int) AS avg_age FROM test_table"
       );
     });
   });

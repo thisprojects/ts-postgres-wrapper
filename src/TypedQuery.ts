@@ -143,6 +143,21 @@ export class TypedQuery<
       if (typeof col === "string") {
         // String columns are treated as simple column names - no "AS" parsing
         // To use aliases, use the object syntax: { column: "name", as: "alias" }
+
+        // Validate that string columns are simple identifiers or qualified names (table.column)
+        // SQL expressions with functions, operators, or dangerous patterns must use expr() helper
+        if (
+          col.includes('(') ||
+          col.includes(';') ||
+          col.includes('--') ||
+          /\bDROP\b|\bDELETE\b|\bINSERT\b|\bUPDATE\b|\bUNION\b/i.test(col)
+        ) {
+          throw new Error(
+            `Invalid column name "${col}". SQL expressions and functions must use expr() helper. ` +
+            `Example: select(expr("COUNT(*)", "total"))`
+          );
+        }
+
         return this.qualifyColumnName(col);
       } else {
         // Always sanitize column names, even in object syntax

@@ -111,14 +111,13 @@ describe("Type Safety Improvements", () => {
   describe("Expression handling", () => {
     it("should handle aggregate expressions in select", async () => {
       await query
-        .select("firstName", "COUNT(*) as count")
+        .select("firstName", expr("COUNT(*)", "count"))
         .groupBy("firstName")
         .execute();
 
-      // String expressions are treated as identifiers and quoted if they contain special characters
-      // For aggregate functions with aliases, use expr() helper or object syntax
+      // For aggregate functions with aliases, use expr() helper
       expect(pool).toHaveExecutedQuery(
-        'SELECT firstName, COUNT(*) as count FROM users GROUP BY firstName'
+        'SELECT firstName, COUNT(*) AS count FROM users GROUP BY firstName'
       );
     });
 
@@ -178,13 +177,11 @@ describe("Type Safety Improvements", () => {
 
   describe("Fallback to Record<string, any> for complex cases", () => {
     it("should fall back to Record<string, any> for string expressions", async () => {
-      // When using arbitrary string expressions, type inference falls back to any
-      // This is expected behavior since we can't infer types from SQL expressions
-      // Functions with parentheses are detected as complex expressions and not quoted
-      await query.select("COUNT(*)", "MAX(age)").execute();
+      // When using arbitrary string expressions, use expr() helper
+      await query.select(expr("COUNT(*)", "count"), expr("MAX(age)", "max_age")).execute();
 
       expect(pool).toHaveExecutedQuery(
-        'SELECT COUNT(*), MAX(age) FROM users'
+        'SELECT COUNT(*) AS count, MAX(age) AS max_age FROM users'
       );
     });
 
@@ -193,12 +190,12 @@ describe("Type Safety Improvements", () => {
         .select(
           "id",  // Typed: known column
           { column: "firstName", as: "name" },  // Typed: known column with alias
-          "RANDOM() as rand"  // Untyped: expression (contains parentheses, treated as complex)
+          expr("RANDOM()", "rand")  // Untyped: expression (use expr() helper)
         )
         .execute();
 
       expect(pool).toHaveExecutedQuery(
-        'SELECT id, firstName AS name, RANDOM() as rand FROM users'
+        'SELECT id, firstName AS name, RANDOM() AS rand FROM users'
       );
     });
   });

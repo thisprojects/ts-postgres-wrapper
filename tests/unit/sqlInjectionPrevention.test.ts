@@ -30,7 +30,7 @@ describe("SQL Injection Prevention", () => {
         await query
           .select("id", "name; DROP TABLE users; -- AS malicious")
           .execute();
-      }).rejects.toThrow("Invalid SQL identifier");
+      }).rejects.toThrow("Invalid column name");
     });
 
     it("should throw error when column name contains SQL injection patterns", async () => {
@@ -42,7 +42,7 @@ describe("SQL Injection Prevention", () => {
       // These should all throw errors because they contain injection patterns
       await expect(async () => {
         await query.select("id; DROP TABLE users; --").execute();
-      }).rejects.toThrow("Invalid SQL identifier");
+      }).rejects.toThrow("Invalid column name");
 
       await expect(async () => {
         await query.select("id' OR '1'='1").execute();
@@ -111,7 +111,7 @@ describe("SQL Injection Prevention", () => {
       // Try to inject via qualified column syntax
       await expect(async () => {
         await query.select("users.id; DROP TABLE users; --").execute();
-      }).rejects.toThrow("Invalid SQL identifier");
+      }).rejects.toThrow("Invalid column name");
     });
 
     it("should prevent injection in column part of object alias", async () => {
@@ -377,7 +377,7 @@ describe("SQL Injection Prevention", () => {
 
       await expect(async () => {
         await query.select('"name"; DROP TABLE users; --"').execute();
-      }).rejects.toThrow("Invalid SQL identifier");
+      }).rejects.toThrow("Invalid column name");
     });
 
     it("should properly escape internal quotes in quoted identifiers", async () => {
@@ -435,11 +435,105 @@ describe("SQL Injection Prevention", () => {
 
       await expect(async () => {
         await query.select('"name--comment"').execute();
-      }).rejects.toThrow("Invalid SQL identifier");
+      }).rejects.toThrow("Invalid column name");
 
       await expect(async () => {
         await query.select('"name/*comment*/"').execute();
       }).rejects.toThrow("Invalid SQL identifier");
+    });
+  });
+
+  describe("select() method SQL injection prevention", () => {
+    it("should reject column names with semicolons", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query.select("id; DROP TABLE users--").execute();
+      }).rejects.toThrow("Invalid column name");
+    });
+
+    it("should reject column names with DROP keyword", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query.select("id DROP TABLE users").execute();
+      }).rejects.toThrow("Invalid column name");
+    });
+
+    it("should reject column names with DELETE keyword", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query.select("id DELETE FROM users").execute();
+      }).rejects.toThrow("Invalid column name");
+    });
+
+    it("should reject column names with UNION keyword", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query.select("id UNION SELECT password").execute();
+      }).rejects.toThrow("Invalid column name");
+    });
+
+    it("should reject column names with SQL comment markers", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query.select("id-- comment").execute();
+      }).rejects.toThrow("Invalid column name");
+    });
+
+    it("should reject function calls in string columns and suggest expr()", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query.select("COUNT(*)").execute();
+      }).rejects.toThrow(/expr\(\) helper/);
+
+      await expect(async () => {
+        await query.select("SUM(id)").execute();
+      }).rejects.toThrow(/expr\(\) helper/);
+    });
+
+    it("should allow safe column names", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await query.select("id", "name", "email").execute();
+      const executedQuery = mockPool.getLastQuery();
+      expect(executedQuery.text).toBe("SELECT id, name, email FROM users");
+    });
+
+    it("should allow qualified column names", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await query.select("users.id", "users.name").execute();
+      const executedQuery = mockPool.getLastQuery();
+      expect(executedQuery.text).toBe("SELECT users.id, users.name FROM users");
     });
   });
 
@@ -453,7 +547,7 @@ describe("SQL Injection Prevention", () => {
       // Try to inject SQL via complex expression
       await expect(async () => {
         await query.select("COUNT(*) ; DROP TABLE x; --").execute();
-      }).rejects.toThrow("Invalid SQL identifier");
+      }).rejects.toThrow("Invalid column name");
     });
 
     it("should prevent injection in complex expressions via comment markers", async () => {
@@ -464,11 +558,11 @@ describe("SQL Injection Prevention", () => {
 
       await expect(async () => {
         await query.select("COUNT(*) -- comment").execute();
-      }).rejects.toThrow("Invalid SQL identifier");
+      }).rejects.toThrow("Invalid column name");
 
       await expect(async () => {
         await query.select("COUNT(*) /* comment */").execute();
-      }).rejects.toThrow("Invalid SQL identifier");
+      }).rejects.toThrow("Invalid column name");
     });
 
     it("should prevent injection in complex expressions via quotes", async () => {
@@ -479,11 +573,11 @@ describe("SQL Injection Prevention", () => {
 
       await expect(async () => {
         await query.select("COUNT(*) ' OR '1'='1").execute();
-      }).rejects.toThrow("Invalid SQL identifier");
+      }).rejects.toThrow("Invalid column name");
 
       await expect(async () => {
         await query.select('COUNT(*) " OR 1=1 --').execute();
-      }).rejects.toThrow("Invalid SQL identifier");
+      }).rejects.toThrow("Invalid column name");
     });
 
     it("should prevent injection in complex expressions via backslash", async () => {
@@ -494,7 +588,7 @@ describe("SQL Injection Prevention", () => {
 
       await expect(async () => {
         await query.select("COUNT(*) \\ DROP TABLE users").execute();
-      }).rejects.toThrow("Invalid SQL identifier");
+      }).rejects.toThrow("Invalid column name");
     });
 
     it("should prevent injection in subqueries via semicolon", async () => {
@@ -505,7 +599,7 @@ describe("SQL Injection Prevention", () => {
 
       await expect(async () => {
         await query.select("(SELECT id FROM users); DROP TABLE x; --").execute();
-      }).rejects.toThrow(/Invalid SQL (identifier|subquery)/);
+      }).rejects.toThrow(/Invalid column name/);
     });
 
     it("should prevent injection in subqueries via comment markers", async () => {
@@ -516,11 +610,11 @@ describe("SQL Injection Prevention", () => {
 
       await expect(async () => {
         await query.select("(SELECT id FROM users) -- drop table").execute();
-      }).rejects.toThrow(/Invalid SQL (identifier|subquery)/);
+      }).rejects.toThrow(/Invalid column name/);
 
       await expect(async () => {
         await query.select("(SELECT id FROM users) /* malicious */").execute();
-      }).rejects.toThrow(/Invalid SQL (identifier|subquery)/);
+      }).rejects.toThrow("Invalid column name");
     });
 
     it("should prevent injection in subqueries via quotes", async () => {
@@ -531,27 +625,27 @@ describe("SQL Injection Prevention", () => {
 
       await expect(async () => {
         await query.select("(SELECT id FROM users WHERE name = 'x' OR '1'='1')").execute();
-      }).rejects.toThrow(/Invalid SQL (identifier|subquery)/);
+      }).rejects.toThrow(/Invalid column name/);
     });
 
-    it("should allow legitimate aggregate functions", async () => {
+    it("should require expr() for aggregate functions", async () => {
       const query = new TypedQuery<"users", TestSchema["users"]>(
         mockPool as any,
         "users"
       );
 
-      // These should work - no injection patterns
-      await query.select("COUNT(*)").execute();
-      let executedQuery = mockPool.getLastQuery();
-      expect(executedQuery.text).toContain("COUNT(*)");
+      // Aggregate functions as strings should be rejected
+      await expect(async () => {
+        await query.select("COUNT(*)").execute();
+      }).rejects.toThrow(/expr\(\) helper/);
 
-      await query.select("MAX(id)").execute();
-      executedQuery = mockPool.getLastQuery();
-      expect(executedQuery.text).toContain("MAX(id)");
+      await expect(async () => {
+        await query.select("MAX(id)").execute();
+      }).rejects.toThrow(/expr\(\) helper/);
 
-      await query.select("SUM(id)").execute();
-      executedQuery = mockPool.getLastQuery();
-      expect(executedQuery.text).toContain("SUM(id)");
+      await expect(async () => {
+        await query.select("SUM(id)").execute();
+      }).rejects.toThrow(/expr\(\) helper/);
     });
 
     it("should allow legitimate JSON operators", async () => {
