@@ -27,6 +27,8 @@ export type {
   SelectColumns,
   JoinCondition,
   JoinConfig,
+  IsolationLevel,
+  TransactionOptions,
 } from "./types";
 
 // Re-export helper functions from types

@@ -261,3 +261,36 @@ export function col<T, K extends keyof T>(column: K, as: string): ColumnAlias<T,
 export function expr(expression: string, as: string): ExpressionAlias {
   return { column: expression, as, __isExpression: true };
 }
+
+/**
+ * PostgreSQL transaction isolation levels
+ * https://www.postgresql.org/docs/current/transaction-iso.html
+ */
+export type IsolationLevel =
+  | 'READ UNCOMMITTED'
+  | 'READ COMMITTED'
+  | 'REPEATABLE READ'
+  | 'SERIALIZABLE';
+
+/**
+ * Options for transaction execution
+ */
+export interface TransactionOptions {
+  /**
+   * Transaction isolation level
+   * @default 'READ COMMITTED'
+   */
+  isolationLevel?: IsolationLevel;
+
+  /**
+   * Whether the transaction should be read-only
+   * @default false
+   */
+  readOnly?: boolean;
+
+  /**
+   * Whether the transaction should be deferrable (only meaningful for SERIALIZABLE and READ ONLY)
+   * @default false
+   */
+  deferrable?: boolean;
+}

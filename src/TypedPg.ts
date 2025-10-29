@@ -1,5 +1,5 @@
 import { Pool } from "pg";
-import type { QueryLogger, TypedPgOptions, ErrorContext } from "./types";
+import type { QueryLogger, TypedPgOptions, ErrorContext, TransactionOptions } from "./types";
 import { sanitizeSqlIdentifier, validateQueryComplexity } from "./utils";
 import { DatabaseError, isTransientError } from "./errors";
 import { TypedQuery } from "./TypedQuery";
@@ -512,12 +512,46 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
    * Begin a transaction
    */
   async transaction<T>(
-    callback: (client: TypedPg<Schema>) => Promise<T>
+    callback: (client: TypedPg<Schema>) => Promise<T>,
+    options?: TransactionOptions
   ): Promise<T> {
     const client = await this.pool.connect();
 
     try {
-      await client.query("BEGIN");
+      // Build BEGIN statement with transaction options
+      let beginStatement = "BEGIN";
+
+      if (options) {
+        const parts: string[] = [];
+
+        // Add isolation level
+        if (options.isolationLevel) {
+          parts.push(`ISOLATION LEVEL ${options.isolationLevel}`);
+        }
+
+        // Add read-only mode
+        if (options.readOnly) {
+          parts.push("READ ONLY");
+        }
+
+        // Add deferrable mode (only valid with SERIALIZABLE and READ ONLY)
+        if (options.deferrable) {
+          if (options.isolationLevel !== 'SERIALIZABLE' || !options.readOnly) {
+            throw new DatabaseError(
+              'DEFERRABLE can only be used with SERIALIZABLE and READ ONLY transactions',
+              'INVALID_TRANSACTION_OPTIONS',
+              { query: 'BEGIN', params: [], operation: 'transaction' }
+            );
+          }
+          parts.push("DEFERRABLE");
+        }
+
+        if (parts.length > 0) {
+          beginStatement += " " + parts.join(" ");
+        }
+      }
+
+      await client.query(beginStatement);
       const txPg = new TypedPg<Schema>(client as any, this.schema, this.options);
       const result = await callback(txPg);
       await client.query("COMMIT");
