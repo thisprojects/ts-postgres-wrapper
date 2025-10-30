@@ -126,6 +126,134 @@ The library supports INNER, LEFT, RIGHT, and FULL OUTER joins via dedicated meth
 
 When JOINs are present, columns are automatically qualified to avoid ambiguity. Users can also manually qualify columns using dot notation (e.g., "users.id").
 
+## Advanced SQL Features
+
+The library provides builder modules for advanced PostgreSQL features in `src/builders/`:
+
+### Set Operations (UNION/INTERSECT/EXCEPT)
+
+**`SetOperationsBuilder` (src/builders/SetOperations.ts)**
+- Combines multiple SELECT queries using UNION, UNION ALL, INTERSECT, or EXCEPT
+- Automatically renumbers parameters across queries ($1, $2, $3, etc.)
+- Supports chaining multiple set operations
+
+Example usage:
+```typescript
+import { SetOperationsBuilder } from './builders';
+
+const builder = new SetOperationsBuilder();
+builder.addOperation("UNION", "SELECT id FROM admins WHERE role = $1", ["admin"]);
+builder.addOperation("UNION", "SELECT id FROM moderators WHERE role = $1", ["mod"]);
+
+const result = builder.buildQuery(
+  "SELECT id FROM users WHERE status = $1",
+  ["active"]
+);
+// Query: "SELECT id FROM users WHERE status = $1 UNION SELECT id FROM admins WHERE role = $2 UNION SELECT id FROM moderators WHERE role = $3"
+// Params: ["active", "admin", "mod"]
+```
+
+### Common Table Expressions (CTEs)
+
+**`CteBuilder` (src/builders/CteBuilder.ts)**
+- Creates WITH clauses for complex queries
+- Supports multiple CTEs in a single query
+- Allows specifying column names for CTEs
+- Tracks parameters across all CTEs
+
+Example usage:
+```typescript
+import { CteBuilder } from './builders';
+import { sanitizeSqlIdentifier } from './utils';
+
+const builder = new CteBuilder(sanitizeSqlIdentifier);
+
+// Add CTEs
+builder.addCte("active_users", "SELECT * FROM users WHERE status = $1", ["active"]);
+builder.addCte(
+  "user_stats",
+  "SELECT user_id, COUNT(*) FROM orders GROUP BY user_id",
+  [],
+  ["user_id", "order_count"] // Optional column names
+);
+
+// Build WITH clause
+const withClause = builder.buildWithClause();
+// "WITH active_users AS (SELECT * FROM users WHERE status = $1), user_stats(user_id, order_count) AS (...) "
+
+const params = builder.getAllParams(); // ["active"]
+```
+
+### Subqueries
+
+**`SubqueryBuilder` (src/builders/SubqueryBuilder.ts)**
+- Static methods for creating subqueries in WHERE clauses
+- Supports IN, NOT IN, EXISTS, NOT EXISTS, ANY, ALL, and comparison operators
+
+Example usage:
+```typescript
+import { SubqueryBuilder } from './builders';
+
+// IN subquery
+const inResult = SubqueryBuilder.createInSubquery(
+  "user_id",
+  "SELECT id FROM users WHERE active = $1",
+  [true]
+);
+// clause: "user_id IN (SELECT id FROM users WHERE active = $1)"
+// params: [true]
+
+// EXISTS subquery
+const existsResult = SubqueryBuilder.createExistsSubquery(
+  "SELECT 1 FROM orders WHERE orders.user_id = users.id",
+  []
+);
+// clause: "EXISTS (SELECT 1 FROM orders WHERE orders.user_id = users.id)"
+
+// ANY subquery
+const anyResult = SubqueryBuilder.createAnySubquery(
+  "salary",
+  ">",
+  "SELECT salary FROM managers WHERE department = $1",
+  ["IT"]
+);
+// clause: "salary > ANY (SELECT salary FROM managers WHERE department = $1)"
+// params: ["IT"]
+
+// ALL subquery
+const allResult = SubqueryBuilder.createAllSubquery(
+  "salary",
+  ">",
+  "SELECT salary FROM employees WHERE department = $1",
+  ["Sales"]
+);
+// clause: "salary > ALL (SELECT salary FROM employees WHERE department = $1)"
+```
+
+### UPSERT (ON CONFLICT)
+
+**`TypedPg.upsert()` (src/index.ts:431)**
+- Inserts rows or updates on conflict
+- Supports conflict target (columns or constraint name)
+- Allows custom update values or using excluded values
+
+Example usage:
+```typescript
+// Upsert with conflict on specific columns
+await db.upsert("users",
+  { id: 1, name: "John", email: "john@example.com" },
+  ["id"], // Conflict columns
+  { name: "excluded.name", email: "excluded.email" } // Update with excluded values
+);
+
+// Upsert with constraint name
+await db.upsert("users",
+  { id: 1, name: "John", email: "john@example.com" },
+  "users_email_key",
+  { updated_at: "NOW()" }
+);
+```
+
 ## Error Prevention
 
 The library prevents common mistakes:

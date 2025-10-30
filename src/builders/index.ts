@@ -12,3 +12,11 @@ export type { JoinSpec } from "./JoinBuilder";
 export { WindowFunctionBuilder } from "./WindowFunctionBuilder";
 
 export { JsonOperations } from "./JsonOperations";
+
+export { SetOperationsBuilder } from "./SetOperations";
+export type { SetOperationType, SetOperation } from "./SetOperations";
+
+export { CteBuilder } from "./CteBuilder";
+export type { CteDefinition } from "./CteBuilder";
+
+export { SubqueryBuilder } from "./SubqueryBuilder";
