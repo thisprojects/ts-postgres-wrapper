@@ -1618,6 +1618,187 @@ describe("TypedQuery", () => {
     });
   });
 
+  describe("Expression security validation", () => {
+    describe("aggregate() validation", () => {
+      it("should reject expressions with semicolons", () => {
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+
+        expect(() => {
+          query.aggregate({
+            total: "COUNT(*); DROP TABLE users; --"
+          });
+        }).toThrow(/cannot contain semicolons/);
+      });
+
+      it("should reject expressions with SQL comments", () => {
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+
+        expect(() => {
+          query.aggregate({
+            total: "COUNT(*) -- comment"
+          });
+        }).toThrow(/cannot contain SQL comments/);
+      });
+
+      it("should reject expressions with multi-line comments", () => {
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+
+        expect(() => {
+          query.aggregate({
+            total: "COUNT(*) /* comment */"
+          });
+        }).toThrow(/cannot contain multi-line SQL comments/);
+      });
+
+      it("should reject expressions with DROP keyword", () => {
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+
+        expect(() => {
+          query.aggregate({
+            total: "DROP TABLE users"
+          });
+        }).toThrow(/cannot contain DDL keywords/);
+      });
+
+      it("should reject expressions with UNION keyword", () => {
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+
+        expect(() => {
+          query.aggregate({
+            total: "1 UNION SELECT password FROM admin"
+          });
+        }).toThrow(/cannot contain UNION statements/);
+      });
+
+      it("should accept legitimate aggregate expressions", async () => {
+        mockPool.setMockResults([{ total: 5, avg_age: 30 }]);
+
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+
+        const result = await query.aggregate({
+          total: "COUNT(*)",
+          avg_age: "AVG(age)",
+          max_salary: "MAX(salary)",
+          complex: "COALESCE(SUM(salary), 0)"
+        }).execute();
+
+        expect(result).toEqual([{ total: 5, avg_age: 30 }]);
+      });
+
+      it("should accept complex CASE expressions", async () => {
+        mockPool.setMockResults([]);
+
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+
+        await query.aggregate({
+          senior_count: "COUNT(CASE WHEN role = 'senior' THEN 1 END)"
+        }).execute();
+
+        const sql = mockPool.getLastQuery().text;
+        expect(sql).toContain("COUNT(CASE WHEN role = 'senior' THEN 1 END)");
+      });
+    });
+
+    describe("window() validation", () => {
+      it("should reject window functions with semicolons", () => {
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+
+        expect(() => {
+          query.select("name").window(
+            "ROW_NUMBER(); DROP TABLE users",
+            "ORDER BY id"
+          );
+        }).toThrow(/cannot contain semicolons/);
+      });
+
+      it("should reject OVER clause with SQL injection", () => {
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+
+        expect(() => {
+          query.select("name").window(
+            "ROW_NUMBER()",
+            "ORDER BY id); DROP TABLE users; --"
+          );
+        }).toThrow(/cannot contain semicolons/);
+      });
+
+      it("should reject window functions with DROP keyword", () => {
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+
+        expect(() => {
+          query.select("name").window(
+            "DROP TABLE users",
+            "ORDER BY id"
+          );
+        }).toThrow(/cannot contain DDL keywords/);
+      });
+
+      it("should accept legitimate window functions", async () => {
+        mockPool.setMockResults([]);
+
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+
+        await query.select("name").window(
+          "FIRST_VALUE(salary)",
+          "PARTITION BY department ORDER BY salary DESC"
+        ).execute();
+
+        const sql = mockPool.getLastQuery().text;
+        expect(sql).toContain("FIRST_VALUE(salary) OVER (PARTITION BY department ORDER BY salary DESC)");
+      });
+
+      it("should accept PERCENT_RANK window function", async () => {
+        mockPool.setMockResults([]);
+
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+
+        await query.select("name").window(
+          "PERCENT_RANK()",
+          "ORDER BY score"
+        ).execute();
+
+        const sql = mockPool.getLastQuery().text;
+        expect(sql).toContain("PERCENT_RANK() OVER (ORDER BY score)");
+      });
+    });
+  });
+
   describe("Case sensitivity", () => {
     it("should handle case sensitive equals by default", async () => {
       mockPool.setMockResults([]);

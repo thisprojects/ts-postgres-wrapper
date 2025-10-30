@@ -12,6 +12,7 @@ import type {
   JoinConfig,
 } from "./types";
 import { sanitizeSqlIdentifier } from "./utils";
+import { DatabaseError } from "./errors";
 
 /**
  * Type-safe query builder for a specific table
@@ -1124,6 +1125,77 @@ export class TypedQuery<
   }
 
   /**
+   * Validate SQL expression to prevent injection attacks
+   * Used for aggregate expressions and window functions where complex SQL is expected
+   *
+   * @throws {DatabaseError} if expression contains dangerous SQL patterns
+   */
+  private validateExpression(expr: string, context: string): void {
+    // Check for statement separators and comments
+    if (/;/.test(expr)) {
+      throw new DatabaseError(
+        `${context} cannot contain semicolons (statement separators)`,
+        'INVALID_EXPRESSION',
+        { query: expr, params: [] }
+      );
+    }
+
+    if (/--/.test(expr)) {
+      throw new DatabaseError(
+        `${context} cannot contain SQL comments (--)`,
+        'INVALID_EXPRESSION',
+        { query: expr, params: [] }
+      );
+    }
+
+    if (/\/\*|\*\//.test(expr)) {
+      throw new DatabaseError(
+        `${context} cannot contain multi-line SQL comments (/* */)`,
+        'INVALID_EXPRESSION',
+        { query: expr, params: [] }
+      );
+    }
+
+    // Check for dangerous SQL keywords that suggest DDL or DML operations
+    const dangerousKeywords = /\b(DROP|CREATE|ALTER|TRUNCATE|GRANT|REVOKE)\b/i;
+    if (dangerousKeywords.test(expr)) {
+      throw new DatabaseError(
+        `${context} cannot contain DDL keywords (DROP, CREATE, ALTER, etc.)`,
+        'INVALID_EXPRESSION',
+        { query: expr, params: [] }
+      );
+    }
+
+    // Check for UNION which could be used for SQL injection
+    if (/\bUNION\b/i.test(expr)) {
+      throw new DatabaseError(
+        `${context} cannot contain UNION statements. Use the raw() method for complex queries.`,
+        'INVALID_EXPRESSION',
+        { query: expr, params: [] }
+      );
+    }
+
+    // Check for backslash escapes (except \" which is valid in JSON)
+    if (/\\(?!")/.test(expr)) {
+      throw new DatabaseError(
+        `${context} contains invalid escape sequences`,
+        'INVALID_EXPRESSION',
+        { query: expr, params: [] }
+      );
+    }
+
+    // Check for suspicious quote patterns that suggest SQL injection attempts
+    // e.g., "' OR '1'='1", "x'; DROP", etc.
+    if (/'[^']*(?:OR|AND)[^']*'=|';|"[^"]*;/i.test(expr)) {
+      throw new DatabaseError(
+        `${context} contains suspicious quote patterns`,
+        'INVALID_EXPRESSION',
+        { query: expr, params: [] }
+      );
+    }
+  }
+
+  /**
    * Sanitize SQL identifier to prevent injection
    * Uses the imported sanitizeSqlIdentifier function from utils
    */
@@ -1460,13 +1532,27 @@ export class TypedQuery<
 
   /**
    * Aggregate multiple columns with custom aliases
+   *
+   * @example
+   * .aggregate({
+   *   total: "COUNT(*)",
+   *   avg_age: "AVG(age)",
+   *   max_salary: "MAX(salary)"
+   * })
+   *
+   * Note: Expressions are validated for SQL injection. For complex queries
+   * that require raw SQL, use the raw() method instead.
    */
   aggregate<T extends Record<string, any>>(aggregations: {
     [K in keyof T]: string;
   }): TypedQuery<TableName, T, Schema> {
     const newQuery = this.clone<T>();
     newQuery.selectedColumns = Object.entries(aggregations).map(
-      ([alias, expr]) => `${expr} AS ${this.sanitizeIdentifier(alias)}`
+      ([alias, expr]) => {
+        // Validate the expression for SQL injection
+        this.validateExpression(String(expr), 'Aggregate expression');
+        return `${expr} AS ${this.sanitizeIdentifier(alias)}`;
+      }
     );
     return newQuery;
   }
@@ -1559,8 +1645,18 @@ export class TypedQuery<
 
   /**
    * Add any window function with custom OVER clause
+   *
+   * @example
+   * .window("FIRST_VALUE(salary)", "PARTITION BY department ORDER BY salary DESC")
+   * .window("PERCENT_RANK()", "ORDER BY score")
+   *
+   * Note: Both function and OVER clause are validated for SQL injection.
+   * For complex queries that require raw SQL, use the raw() method instead.
    */
   window(function_: string, over: string): this {
+    // Validate both the function expression and OVER clause
+    this.validateExpression(function_, 'Window function');
+    this.validateExpression(over, 'Window OVER clause');
     this.windowFunctions.push(`${function_} OVER (${over})`);
     return this;
   }
