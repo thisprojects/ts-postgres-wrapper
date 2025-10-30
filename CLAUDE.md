@@ -126,6 +126,52 @@ The library supports INNER, LEFT, RIGHT, and FULL OUTER joins via dedicated meth
 
 When JOINs are present, columns are automatically qualified to avoid ambiguity. Users can also manually qualify columns using dot notation (e.g., "users.id").
 
+### Type-Safe JOIN Return Types
+
+JOIN methods use TypeScript generics to provide type-safe merged result types:
+
+**INNER JOIN** - Merges both table types (all columns required):
+```typescript
+const query = db.from<"users">("users")
+  .innerJoin("posts", "users.id", "posts.user_id");
+// Result type: (users columns) & (posts columns)
+// Both tables' columns are required in the result
+```
+
+**LEFT JOIN** - Makes joined table columns optional:
+```typescript
+const query = db.from<"users">("users")
+  .leftJoin("posts", "users.id", "posts.user_id");
+// Result type: (users columns) & Partial<(posts columns)>
+// Users columns required, posts columns optional (may be null)
+```
+
+**RIGHT JOIN** - Makes original table columns optional:
+```typescript
+const query = db.from<"users">("users")
+  .rightJoin("posts", "users.id", "posts.user_id");
+// Result type: Partial<(users columns)> & (posts columns)
+// Posts columns required, users columns optional (may be null)
+```
+
+**FULL JOIN** - Makes all columns optional:
+```typescript
+const query = db.from<"users">("users")
+  .fullJoin("posts", "users.id", "posts.user_id");
+// Result type: Partial<(users columns)> & Partial<(posts columns)>
+// All columns optional (both tables may have null rows)
+```
+
+**Multiple JOINs** - Types accumulate across chained joins:
+```typescript
+const query = db.from<"users">("users")
+  .innerJoin("posts", "users.id", "posts.user_id")
+  .leftJoin("comments", "posts.id", "comments.post_id");
+// Result type: (users) & (posts) & Partial<(comments)>
+```
+
+The type system correctly models SQL join semantics, ensuring TypeScript catches potential null reference errors at compile time.
+
 ## Advanced SQL Features
 
 The library provides builder modules for advanced PostgreSQL features in `src/builders/`:
