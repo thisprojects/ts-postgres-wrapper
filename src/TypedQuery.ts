@@ -174,6 +174,18 @@ export class TypedQuery<
   /**
    * INNER JOIN with another table
    */
+  innerJoin<JoinedTable extends keyof Schema & string>(
+    joinedTable: JoinedTable,
+    leftColumnOrConditions: string | JoinCondition[],
+    rightColumnOrAlias?: string,
+    alias?: string
+  ): TypedQuery<TableName, Row & Schema[JoinedTable], Schema>;
+  innerJoin(
+    joinedTable: string,
+    leftColumnOrConditions: string | JoinCondition[],
+    rightColumnOrAlias?: string,
+    alias?: string
+  ): TypedQuery<TableName, any, Schema>;
   innerJoin(
     joinedTable: string,
     leftColumnOrConditions: string | JoinCondition[],
@@ -207,6 +219,18 @@ export class TypedQuery<
   /**
    * LEFT JOIN with another table
    */
+  leftJoin<JoinedTable extends keyof Schema & string>(
+    joinedTable: JoinedTable,
+    leftColumnOrConditions: string | JoinCondition[],
+    rightColumnOrAlias?: string,
+    alias?: string
+  ): TypedQuery<TableName, Row & Partial<Schema[JoinedTable]>, Schema>;
+  leftJoin(
+    joinedTable: string,
+    leftColumnOrConditions: string | JoinCondition[],
+    rightColumnOrAlias?: string,
+    alias?: string
+  ): TypedQuery<TableName, any, Schema>;
   leftJoin(
     joinedTable: string,
     leftColumnOrConditions: string | JoinCondition[],
@@ -240,6 +264,18 @@ export class TypedQuery<
   /**
    * RIGHT JOIN with another table
    */
+  rightJoin<JoinedTable extends keyof Schema & string>(
+    joinedTable: JoinedTable,
+    leftColumnOrConditions: string | JoinCondition[],
+    rightColumnOrAlias?: string,
+    alias?: string
+  ): TypedQuery<TableName, Partial<Row> & Schema[JoinedTable], Schema>;
+  rightJoin(
+    joinedTable: string,
+    leftColumnOrConditions: string | JoinCondition[],
+    rightColumnOrAlias?: string,
+    alias?: string
+  ): TypedQuery<TableName, any, Schema>;
   rightJoin(
     joinedTable: string,
     leftColumnOrConditions: string | JoinCondition[],
@@ -273,6 +309,18 @@ export class TypedQuery<
   /**
    * FULL OUTER JOIN with another table
    */
+  fullJoin<JoinedTable extends keyof Schema & string>(
+    joinedTable: JoinedTable,
+    leftColumnOrConditions: string | JoinCondition[],
+    rightColumnOrAlias?: string,
+    alias?: string
+  ): TypedQuery<TableName, Partial<Row> & Partial<Schema[JoinedTable]>, Schema>;
+  fullJoin(
+    joinedTable: string,
+    leftColumnOrConditions: string | JoinCondition[],
+    rightColumnOrAlias?: string,
+    alias?: string
+  ): TypedQuery<TableName, any, Schema>;
   fullJoin(
     joinedTable: string,
     leftColumnOrConditions: string | JoinCondition[],
