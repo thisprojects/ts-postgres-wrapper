@@ -1669,7 +1669,111 @@ describe("TypedQuery", () => {
           query.aggregate({
             total: "DROP TABLE users"
           });
-        }).toThrow(/cannot contain DDL keywords/);
+        }).toThrow(/cannot contain DDL or DML keywords/);
+      });
+
+      it("should reject expressions with DELETE keyword", () => {
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+
+        expect(() => {
+          query.aggregate({
+            total: "DELETE FROM users"
+          });
+        }).toThrow(/cannot contain DDL or DML keywords/);
+      });
+
+      it("should reject expressions with INSERT keyword", () => {
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+
+        expect(() => {
+          query.aggregate({
+            total: "INSERT INTO admin VALUES (1)"
+          });
+        }).toThrow(/cannot contain DDL or DML keywords/);
+      });
+
+      it("should reject expressions with UPDATE keyword", () => {
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+
+        expect(() => {
+          query.aggregate({
+            total: "UPDATE users SET admin = true"
+          });
+        }).toThrow(/cannot contain DDL or DML keywords/);
+      });
+
+      it("should reject expressions with CREATE keyword", () => {
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+
+        expect(() => {
+          query.aggregate({
+            total: "CREATE TABLE evil (id INT)"
+          });
+        }).toThrow(/cannot contain DDL or DML keywords/);
+      });
+
+      it("should reject expressions with ALTER keyword", () => {
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+
+        expect(() => {
+          query.aggregate({
+            total: "ALTER TABLE users ADD admin BOOLEAN"
+          });
+        }).toThrow(/cannot contain DDL or DML keywords/);
+      });
+
+      it("should reject expressions with TRUNCATE keyword", () => {
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+
+        expect(() => {
+          query.aggregate({
+            total: "TRUNCATE TABLE users"
+          });
+        }).toThrow(/cannot contain DDL or DML keywords/);
+      });
+
+      it("should reject expressions with GRANT keyword", () => {
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+
+        expect(() => {
+          query.aggregate({
+            total: "GRANT ALL ON users TO attacker"
+          });
+        }).toThrow(/cannot contain DDL or DML keywords/);
+      });
+
+      it("should reject expressions with REVOKE keyword", () => {
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+
+        expect(() => {
+          query.aggregate({
+            total: "REVOKE SELECT ON users FROM public"
+          });
+        }).toThrow(/cannot contain DDL or DML keywords/);
       });
 
       it("should reject expressions with UNION keyword", () => {
@@ -1683,6 +1787,71 @@ describe("TypedQuery", () => {
             total: "1 UNION SELECT password FROM admin"
           });
         }).toThrow(/cannot contain UNION statements/);
+      });
+
+      it("should reject expressions with invalid backslash escapes", () => {
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+
+        expect(() => {
+          query.aggregate({
+            total: "COUNT(*)\\n"
+          });
+        }).toThrow(/invalid escape sequences/);
+      });
+
+      it("should reject expressions with backslash attempts", () => {
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+
+        expect(() => {
+          query.aggregate({
+            total: "COUNT(*)\\\\"
+          });
+        }).toThrow(/invalid escape sequences/);
+      });
+
+      it("should reject expressions with suspicious quote patterns - OR injection", () => {
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+
+        expect(() => {
+          query.aggregate({
+            total: "COUNT(*) WHERE name = '' OR '1'='1'"
+          });
+        }).toThrow(/suspicious quote patterns/);
+      });
+
+      it("should reject expressions with suspicious quote patterns - AND injection", () => {
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+
+        expect(() => {
+          query.aggregate({
+            total: "COUNT(*) WHERE id = '1' AND '1'='1'"
+          });
+        }).toThrow(/suspicious quote patterns/);
+      });
+
+      it("should reject expressions with quote-semicolon injection pattern", () => {
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+
+        expect(() => {
+          query.aggregate({
+            total: "COUNT(*) WHERE name = 'admin';"
+          });
+        }).toThrow(/cannot contain semicolons/);  // Semicolons are checked first
       });
 
       it("should accept legitimate aggregate expressions", async () => {
@@ -1760,7 +1929,77 @@ describe("TypedQuery", () => {
             "DROP TABLE users",
             "ORDER BY id"
           );
-        }).toThrow(/cannot contain DDL keywords/);
+        }).toThrow(/cannot contain DDL or DML keywords/);
+      });
+
+      it("should reject window functions with DELETE keyword", () => {
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+
+        expect(() => {
+          query.select("name").window(
+            "DELETE FROM users",
+            "ORDER BY id"
+          );
+        }).toThrow(/cannot contain DDL or DML keywords/);
+      });
+
+      it("should reject window functions with CREATE in OVER clause", () => {
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+
+        expect(() => {
+          query.select("name").window(
+            "ROW_NUMBER()",
+            "CREATE TABLE evil (id INT)"
+          );
+        }).toThrow(/cannot contain DDL or DML keywords/);
+      });
+
+      it("should reject window functions with UNION in function", () => {
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+
+        expect(() => {
+          query.select("name").window(
+            "UNION SELECT password FROM admin",
+            "ORDER BY id"
+          );
+        }).toThrow(/cannot contain UNION/);
+      });
+
+      it("should reject window functions with backslash escapes", () => {
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+
+        expect(() => {
+          query.select("name").window(
+            "ROW_NUMBER()\\n",
+            "ORDER BY id"
+          );
+        }).toThrow(/invalid escape sequences/);
+      });
+
+      it("should reject window functions with suspicious quotes in OVER clause", () => {
+        const query = new TypedQuery<"users", TestSchema["users"]>(
+          mockPool as any,
+          "users"
+        );
+
+        expect(() => {
+          query.select("name").window(
+            "ROW_NUMBER()",
+            "PARTITION BY dept WHERE '' OR '1'='1'"
+          );
+        }).toThrow(/suspicious quote patterns/);
       });
 
       it("should accept legitimate window functions", async () => {

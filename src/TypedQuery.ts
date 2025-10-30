@@ -1157,10 +1157,10 @@ export class TypedQuery<
     }
 
     // Check for dangerous SQL keywords that suggest DDL or DML operations
-    const dangerousKeywords = /\b(DROP|CREATE|ALTER|TRUNCATE|GRANT|REVOKE)\b/i;
+    const dangerousKeywords = /\b(DROP|CREATE|ALTER|TRUNCATE|GRANT|REVOKE|DELETE|INSERT|UPDATE)\b/i;
     if (dangerousKeywords.test(expr)) {
       throw new DatabaseError(
-        `${context} cannot contain DDL keywords (DROP, CREATE, ALTER, etc.)`,
+        `${context} cannot contain DDL or DML keywords (DROP, CREATE, ALTER, DELETE, INSERT, UPDATE, etc.)`,
         'INVALID_EXPRESSION',
         { query: expr, params: [] }
       );
@@ -1185,8 +1185,8 @@ export class TypedQuery<
     }
 
     // Check for suspicious quote patterns that suggest SQL injection attempts
-    // e.g., "' OR '1'='1", "x'; DROP", etc.
-    if (/'[^']*(?:OR|AND)[^']*'=|';|"[^"]*;/i.test(expr)) {
+    // e.g., "' OR '1'='1", "x'; DROP", "'' OR", "'1' AND '1'='1'", etc.
+    if (/''\s*(?:OR|AND)\s|'\s*(?:OR|AND)\s*'[^']*'=|';|"[^"]*;/i.test(expr)) {
       throw new DatabaseError(
         `${context} contains suspicious quote patterns`,
         'INVALID_EXPRESSION',
