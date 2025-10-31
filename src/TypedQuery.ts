@@ -833,6 +833,59 @@ export class TypedQuery<
   }
 
   /**
+   * Validate JSON field/path component to prevent SQL injection
+   * JSON field names should be safe identifiers
+   */
+  private validateJsonIdentifier(value: string, context: string = "JSON identifier"): string {
+    const strValue = String(value).trim();
+
+    if (strValue.length === 0) {
+      throw new DatabaseError(
+        `Invalid ${context}: cannot be empty`,
+        'INVALID_JSON_IDENTIFIER',
+        { query: '', params: [], detail: `value: ${strValue}` }
+      );
+    }
+
+    // Check for dangerous characters that could bypass escaping
+    if (/[;"`\\]|--|\*\/|\/\*/.test(strValue)) {
+      throw new DatabaseError(
+        `Invalid ${context}: contains dangerous characters`,
+        'SQL_INJECTION_ATTEMPT',
+        { query: '', params: [], detail: `value: ${strValue}` }
+      );
+    }
+
+    // Check for SQL keywords as whole words
+    if (/\b(UNION|SELECT|DROP|INSERT|UPDATE|DELETE|TRUNCATE|ALTER|EXEC|EXECUTE)\b/i.test(strValue)) {
+      throw new DatabaseError(
+        `Invalid ${context}: contains SQL keywords`,
+        'SQL_INJECTION_ATTEMPT',
+        { query: '', params: [], detail: `value: ${strValue}` }
+      );
+    }
+
+    // Check for SQL operators in suspicious contexts
+    if (/(^|\s)(OR|AND)(\s|$)/i.test(strValue) || /'.*?(OR|AND).*?'/i.test(strValue)) {
+      throw new DatabaseError(
+        `Invalid ${context}: contains SQL operators in suspicious context`,
+        'SQL_INJECTION_ATTEMPT',
+        { query: '', params: [], detail: `value: ${strValue}` }
+      );
+    }
+
+    if (strValue.length > 255) {
+      throw new DatabaseError(
+        `Invalid ${context}: exceeds maximum length of 255 characters`,
+        'INVALID_JSON_IDENTIFIER',
+        { query: '', params: [], detail: `value: ${strValue.substring(0, 50)}...` }
+      );
+    }
+
+    return strValue;
+  }
+
+  /**
    * Get JSON object field (type-safe)
    * @template T - The type of the JSON object
    * @param column - The column name containing JSON
@@ -847,9 +900,8 @@ export class TypedQuery<
     field: keyof T
   ): string;
   jsonField(column: string, field: string): string {
-    return `${this.qualifyColumnName(column)}->'${this.escapeSingleQuotes(
-      String(field)
-    )}'`;
+    const validatedField = this.validateJsonIdentifier(field, "JSON field name");
+    return `${this.qualifyColumnName(column)}->'${this.escapeSingleQuotes(validatedField)}'`;
   }
 
   /**
@@ -867,9 +919,8 @@ export class TypedQuery<
     field: keyof T
   ): string;
   jsonFieldAsText(column: string, field: string): string {
-    return `${this.qualifyColumnName(column)}->>'${this.escapeSingleQuotes(
-      String(field)
-    )}'`;
+    const validatedField = this.validateJsonIdentifier(field, "JSON field name");
+    return `${this.qualifyColumnName(column)}->>'${this.escapeSingleQuotes(validatedField)}'`;
   }
 
   /**
@@ -886,7 +937,8 @@ export class TypedQuery<
   >(column: K, path: P): string;
   jsonPath(column: string, path: string[]): string;
   jsonPath(column: string, path: string[]): string {
-    const pathStr = path
+    const validatedPath = path.map((p) => this.validateJsonIdentifier(p, "JSON path component"));
+    const pathStr = validatedPath
       .map((p) => `'${this.escapeSingleQuotes(p)}'`)
       .join(",");
     return `${this.qualifyColumnName(column)}#>ARRAY[${pathStr}]`;
@@ -906,7 +958,8 @@ export class TypedQuery<
   >(column: K, path: P): string;
   jsonPathAsText(column: string, path: string[]): string;
   jsonPathAsText(column: string, path: string[]): string {
-    const pathStr = path
+    const validatedPath = path.map((p) => this.validateJsonIdentifier(p, "JSON path component"));
+    const pathStr = validatedPath
       .map((p) => `'${this.escapeSingleQuotes(p)}'`)
       .join(",");
     return `${this.qualifyColumnName(column)}#>>ARRAY[${pathStr}]`;
@@ -916,7 +969,8 @@ export class TypedQuery<
    * Check if JSON object exists at path
    */
   hasJsonPath(column: string, path: string[]): this {
-    const pathStr = path
+    const validatedPath = path.map((p) => this.validateJsonIdentifier(p, "JSON path component"));
+    const pathStr = validatedPath
       .map((p) => `'${this.escapeSingleQuotes(p)}'`)
       .join(",");
     return this.where(
@@ -993,7 +1047,9 @@ export class TypedQuery<
     createMissing: boolean = true
   ): string {
     const qualifiedColumn = this.qualifyColumnName(column);
-    const pathStr = `{${path.join(",")}}`;
+    const validatedPath = path.map((p) => this.validateJsonIdentifier(p, "JSON path component"));
+    const escapedPath = validatedPath.map((p) => this.escapeSingleQuotes(p));
+    const pathStr = `{${escapedPath.join(",")}}`;
     const jsonValueStr = this.escapeSingleQuotes(JSON.stringify(value));
     return `jsonb_set(${qualifiedColumn}, '${pathStr}', '${jsonValueStr}'::jsonb, ${createMissing})`;
   }
@@ -1010,7 +1066,9 @@ export class TypedQuery<
     insertAfter: boolean = false
   ): string {
     const qualifiedColumn = this.qualifyColumnName(column);
-    const pathStr = `{${path.join(",")}}`;
+    const validatedPath = path.map((p) => this.validateJsonIdentifier(p, "JSON path component"));
+    const escapedPath = validatedPath.map((p) => this.escapeSingleQuotes(p));
+    const pathStr = `{${escapedPath.join(",")}}`;
     const jsonValueStr = this.escapeSingleQuotes(JSON.stringify(value));
     return `jsonb_insert(${qualifiedColumn}, '${pathStr}', '${jsonValueStr}'::jsonb, ${insertAfter})`;
   }
@@ -1022,7 +1080,9 @@ export class TypedQuery<
    */
   jsonbDeletePath(column: string, path: string[]): string {
     const qualifiedColumn = this.qualifyColumnName(column);
-    const pathStr = `{${path.join(",")}}`;
+    const validatedPath = path.map((p) => this.validateJsonIdentifier(p, "JSON path component"));
+    const escapedPath = validatedPath.map((p) => this.escapeSingleQuotes(p));
+    const pathStr = `{${escapedPath.join(",")}}`;
     return `${qualifiedColumn} #- '${pathStr}'`;
   }
 
@@ -1033,7 +1093,8 @@ export class TypedQuery<
    */
   jsonbDeleteKey(column: string, key: string): string {
     const qualifiedColumn = this.qualifyColumnName(column);
-    return `${qualifiedColumn} - '${this.escapeSingleQuotes(key)}'`;
+    const validatedKey = this.validateJsonIdentifier(key, "JSON key");
+    return `${qualifiedColumn} - '${this.escapeSingleQuotes(validatedKey)}'`;
   }
 
   /**
@@ -1064,7 +1125,9 @@ export class TypedQuery<
   jsonbTypeof(column: string, path?: string[]): string {
     const qualifiedColumn = this.qualifyColumnName(column);
     if (path && path.length > 0) {
-      const pathStr = `{${path.join(",")}}`;
+      const validatedPath = path.map((p) => this.validateJsonIdentifier(p, "JSON path component"));
+      const escapedPath = validatedPath.map((p) => this.escapeSingleQuotes(p));
+      const pathStr = `{${escapedPath.join(",")}}`;
       return `jsonb_typeof(${qualifiedColumn}#>'${pathStr}')`;
     }
     return `jsonb_typeof(${qualifiedColumn})`;
@@ -1078,7 +1141,9 @@ export class TypedQuery<
   jsonbArrayLength(column: string, path?: string[]): string {
     const qualifiedColumn = this.qualifyColumnName(column);
     if (path && path.length > 0) {
-      const pathStr = `{${path.join(",")}}`;
+      const validatedPath = path.map((p) => this.validateJsonIdentifier(p, "JSON path component"));
+      const escapedPath = validatedPath.map((p) => this.escapeSingleQuotes(p));
+      const pathStr = `{${escapedPath.join(",")}}`;
       return `jsonb_array_length(${qualifiedColumn}#>'${pathStr}')`;
     }
     return `jsonb_array_length(${qualifiedColumn})`;
@@ -1091,6 +1156,7 @@ export class TypedQuery<
    */
   jsonbBuildObject(obj: Record<string, any>): string {
     const pairs = Object.entries(obj).flatMap(([key, value]) => {
+      const validatedKey = this.validateJsonIdentifier(key, "JSON object key");
       let sqlValue: string;
       if (typeof value === "string") {
         sqlValue = `'${this.escapeSingleQuotes(value)}'`;
@@ -1099,7 +1165,7 @@ export class TypedQuery<
       } else {
         sqlValue = String(value);
       }
-      return [`'${this.escapeSingleQuotes(key)}'`, sqlValue];
+      return [`'${this.escapeSingleQuotes(validatedKey)}'`, sqlValue];
     });
     return `jsonb_build_object(${pairs.join(", ")})`;
   }

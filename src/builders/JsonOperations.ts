@@ -4,12 +4,62 @@
  */
 
 import type { ColumnNames, JSONValue } from "../types";
+import { DatabaseError } from "../errors";
 
 export class JsonOperations<Row extends Record<string, any>> {
   constructor(
     private qualifyColumn: (column: string) => string,
     private escapeSingleQuotes: (value: string) => string
   ) {}
+
+  /**
+   * Validate JSON field/path component to prevent SQL injection
+   */
+  private validateJsonIdentifier(value: string, context: string = "JSON identifier"): string {
+    const strValue = String(value).trim();
+
+    if (strValue.length === 0) {
+      throw new DatabaseError(
+        `Invalid ${context}: cannot be empty`,
+        'INVALID_JSON_IDENTIFIER',
+        { query: '', params: [], detail: `value: ${strValue}` }
+      );
+    }
+
+    if (/[;"`\\]|--|\*\/|\/\*/.test(strValue)) {
+      throw new DatabaseError(
+        `Invalid ${context}: contains dangerous characters`,
+        'SQL_INJECTION_ATTEMPT',
+        { query: '', params: [], detail: `value: ${strValue}` }
+      );
+    }
+
+    if (/\b(UNION|SELECT|DROP|INSERT|UPDATE|DELETE|TRUNCATE|ALTER|EXEC|EXECUTE)\b/i.test(strValue)) {
+      throw new DatabaseError(
+        `Invalid ${context}: contains SQL keywords`,
+        'SQL_INJECTION_ATTEMPT',
+        { query: '', params: [], detail: `value: ${strValue}` }
+      );
+    }
+
+    if (/(^|\s)(OR|AND)(\s|$)/i.test(strValue) || /'.*?(OR|AND).*?'/i.test(strValue)) {
+      throw new DatabaseError(
+        `Invalid ${context}: contains SQL operators in suspicious context`,
+        'SQL_INJECTION_ATTEMPT',
+        { query: '', params: [], detail: `value: ${strValue}` }
+      );
+    }
+
+    if (strValue.length > 255) {
+      throw new DatabaseError(
+        `Invalid ${context}: exceeds maximum length of 255 characters`,
+        'INVALID_JSON_IDENTIFIER',
+        { query: '', params: [], detail: `value: ${strValue.substring(0, 50)}...` }
+      );
+    }
+
+    return strValue;
+  }
 
   /**
    * Get JSON object field (using -> operator)
@@ -24,9 +74,8 @@ export class JsonOperations<Row extends Record<string, any>> {
     field: keyof T
   ): string;
   jsonField(column: string, field: string): string {
-    return `${this.qualifyColumn(column)}->'${this.escapeSingleQuotes(
-      String(field)
-    )}'`;
+    const validatedField = this.validateJsonIdentifier(field, "JSON field name");
+    return `${this.qualifyColumn(column)}->'${this.escapeSingleQuotes(validatedField)}'`;
   }
 
   /**
@@ -42,9 +91,8 @@ export class JsonOperations<Row extends Record<string, any>> {
     field: keyof T
   ): string;
   jsonFieldAsText(column: string, field: string): string {
-    return `${this.qualifyColumn(column)}->>'${this.escapeSingleQuotes(
-      String(field)
-    )}'`;
+    const validatedField = this.validateJsonIdentifier(field, "JSON field name");
+    return `${this.qualifyColumn(column)}->>'${this.escapeSingleQuotes(validatedField)}'`;
   }
 
   /**
@@ -52,8 +100,9 @@ export class JsonOperations<Row extends Record<string, any>> {
    * Returns JSON
    */
   jsonPath(column: string, path: string[]): string {
-    const arrayStr = path
-      .map((p) => `'${this.escapeSingleQuotes(String(p))}'`)
+    const validatedPath = path.map((p) => this.validateJsonIdentifier(p, "JSON path component"));
+    const arrayStr = validatedPath
+      .map((p) => `'${this.escapeSingleQuotes(p)}'`)
       .join(",");
     return `${this.qualifyColumn(column)}#>ARRAY[${arrayStr}]`;
   }
@@ -63,8 +112,9 @@ export class JsonOperations<Row extends Record<string, any>> {
    * Returns TEXT
    */
   jsonPathAsText(column: string, path: string[]): string {
-    const arrayStr = path
-      .map((p) => `'${this.escapeSingleQuotes(String(p))}'`)
+    const validatedPath = path.map((p) => this.validateJsonIdentifier(p, "JSON path component"));
+    const arrayStr = validatedPath
+      .map((p) => `'${this.escapeSingleQuotes(p)}'`)
       .join(",");
     return `${this.qualifyColumn(column)}#>>ARRAY[${arrayStr}]`;
   }
@@ -81,7 +131,9 @@ export class JsonOperations<Row extends Record<string, any>> {
     createMissing: boolean = true
   ): string {
     const qualifiedColumn = this.qualifyColumn(column);
-    const pathStr = `{${path.join(",")}}`;
+    const validatedPath = path.map((p) => this.validateJsonIdentifier(p, "JSON path component"));
+    const escapedPath = validatedPath.map((p) => this.escapeSingleQuotes(p));
+    const pathStr = `{${escapedPath.join(",")}}`;
     const jsonValueStr = this.escapeSingleQuotes(JSON.stringify(value));
     return `jsonb_set(${qualifiedColumn}, '${pathStr}', '${jsonValueStr}'::jsonb, ${createMissing})`;
   }
@@ -96,7 +148,9 @@ export class JsonOperations<Row extends Record<string, any>> {
     insertAfter: boolean = false
   ): string {
     const qualifiedColumn = this.qualifyColumn(column);
-    const pathStr = `{${path.join(",")}}`;
+    const validatedPath = path.map((p) => this.validateJsonIdentifier(p, "JSON path component"));
+    const escapedPath = validatedPath.map((p) => this.escapeSingleQuotes(p));
+    const pathStr = `{${escapedPath.join(",")}}`;
     const jsonValueStr = this.escapeSingleQuotes(JSON.stringify(value));
     return `jsonb_insert(${qualifiedColumn}, '${pathStr}', '${jsonValueStr}'::jsonb, ${insertAfter})`;
   }
@@ -115,7 +169,8 @@ export class JsonOperations<Row extends Record<string, any>> {
    */
   jsonbDeleteKey(column: string, key: string): string {
     const qualifiedColumn = this.qualifyColumn(column);
-    const escapedKey = this.escapeSingleQuotes(key);
+    const validatedKey = this.validateJsonIdentifier(key, "JSON key");
+    const escapedKey = this.escapeSingleQuotes(validatedKey);
     return `${qualifiedColumn} - '${escapedKey}'`;
   }
 
@@ -124,7 +179,9 @@ export class JsonOperations<Row extends Record<string, any>> {
    */
   jsonbDeletePath(column: string, path: string[]): string {
     const qualifiedColumn = this.qualifyColumn(column);
-    const pathStr = `{${path.join(",")}}`;
+    const validatedPath = path.map((p) => this.validateJsonIdentifier(p, "JSON path component"));
+    const escapedPath = validatedPath.map((p) => this.escapeSingleQuotes(p));
+    const pathStr = `{${escapedPath.join(",")}}`;
     return `${qualifiedColumn} #- '${pathStr}'`;
   }
 
@@ -133,12 +190,15 @@ export class JsonOperations<Row extends Record<string, any>> {
    */
   jsonbBuildObject(...pairs: [string, any][]): string {
     const args = pairs
-      .flatMap(([key, value]) => [
-        `'${this.escapeSingleQuotes(key)}'`,
-        typeof value === "string"
-          ? `'${this.escapeSingleQuotes(value)}'`
-          : String(value),
-      ])
+      .flatMap(([key, value]) => {
+        const validatedKey = this.validateJsonIdentifier(key, "JSON object key");
+        return [
+          `'${this.escapeSingleQuotes(validatedKey)}'`,
+          typeof value === "string"
+            ? `'${this.escapeSingleQuotes(value)}'`
+            : String(value),
+        ];
+      })
       .join(", ");
     return `jsonb_build_object(${args})`;
   }
