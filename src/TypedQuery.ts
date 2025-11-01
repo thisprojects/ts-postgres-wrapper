@@ -139,6 +139,15 @@ export class TypedQuery<
   select(
     ...columns: (string | ColumnAlias<Row> | { column: string; as: string })[]
   ): TypedQuery<TableName, Record<string, any>, Schema> {
+    // Validate array length to prevent DoS attacks
+    if (columns.length > 100) {
+      throw new DatabaseError(
+        'SELECT column count exceeds maximum of 100',
+        'TOO_MANY_SELECT_COLUMNS',
+        { query: '', params: [], detail: `count: ${columns.length}` }
+      );
+    }
+
     const newQuery = this.clone<any>();
     newQuery.selectedColumns = columns.map((col) => {
       if (typeof col === "string") {
@@ -900,6 +909,15 @@ export class TypedQuery<
   groupBy(...columns: string[]): this {
     if (columns.length === 0) {
       throw new Error("GROUP BY clause requires at least one column");
+    }
+
+    // Validate array length to prevent DoS attacks
+    if (columns.length > 50) {
+      throw new DatabaseError(
+        'GROUP BY column count exceeds maximum of 50',
+        'TOO_MANY_GROUP_COLUMNS',
+        { query: '', params: [], detail: `count: ${columns.length}` }
+      );
     }
 
     // Validate each column for SQL injection before processing

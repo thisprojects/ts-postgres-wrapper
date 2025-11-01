@@ -333,5 +333,53 @@ describe("Input Validation DoS Prevention", () => {
         expect(() => query.toSQL()).not.toThrow();
       });
     });
+
+    describe("SELECT columns", () => {
+      it("should reject too many SELECT columns (100+)", () => {
+        const query = createQuery();
+        const tooManyColumns = Array.from({ length: 101 }, (_, i) => `col_${i}`);
+
+        expect(() => {
+          query.select(...tooManyColumns);
+        }).toThrow(DatabaseError);
+
+        expect(() => {
+          query.select(...tooManyColumns);
+        }).toThrow(/select.*column.*exceeds maximum.*100/i);
+      });
+
+      it("should accept SELECT columns at the limit (100)", () => {
+        const query = createQuery();
+        const maxColumns = Array.from({ length: 100 }, (_, i) => `col_${i}`);
+
+        expect(() => {
+          query.select(...maxColumns);
+        }).not.toThrow();
+      });
+    });
+
+    describe("GROUP BY columns", () => {
+      it("should reject too many GROUP BY columns (50+)", () => {
+        const query = createQuery();
+        const tooManyColumns = Array.from({ length: 51 }, (_, i) => `col_${i}`);
+
+        expect(() => {
+          query.groupBy(...tooManyColumns);
+        }).toThrow(DatabaseError);
+
+        expect(() => {
+          query.groupBy(...tooManyColumns);
+        }).toThrow(/group by.*column.*exceeds maximum.*50/i);
+      });
+
+      it("should accept GROUP BY columns at the limit (50)", () => {
+        const query = createQuery();
+        const maxColumns = Array.from({ length: 50 }, (_, i) => `col_${i}`);
+
+        expect(() => {
+          query.groupBy(...maxColumns);
+        }).not.toThrow();
+      });
+    });
   });
 });
