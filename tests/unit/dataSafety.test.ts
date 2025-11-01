@@ -37,7 +37,7 @@ describe("Data Safety", () => {
           .where("active", "=", true)
           .orderBy("name; DROP TABLE users; --")
           .execute();
-      }).rejects.toThrow("Invalid SQL identifier");
+      }).rejects.toThrow(/Invalid ORDER BY column|Invalid SQL identifier/);
     });
 
     it("should safely handle malicious input in SELECT", async () => {

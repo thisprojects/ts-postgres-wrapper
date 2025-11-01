@@ -800,6 +800,19 @@ export class TypedQuery<
       );
     }
 
+    // Validate column for SQL injection before processing
+    const colStr = String(column);
+    if (
+      colStr.includes(';') ||
+      colStr.includes('--') ||
+      /\bDROP\b|\bDELETE\b|\bINSERT\b|\bUPDATE\b|\bUNION\b|\bCREATE\b|\bALTER\b|\bTRUNCATE\b/i.test(colStr)
+    ) {
+      throw new DatabaseError(
+        `Invalid ORDER BY column "${colStr}". Column names cannot contain SQL keywords or dangerous patterns.`,
+        'INVALID_ORDER_BY_COLUMN'
+      );
+    }
+
     this.validateOrderByColumn(String(column));
     const qualifiedColumn = this.qualifyColumnName(String(column));
 
@@ -888,6 +901,22 @@ export class TypedQuery<
     if (columns.length === 0) {
       throw new Error("GROUP BY clause requires at least one column");
     }
+
+    // Validate each column for SQL injection before processing
+    columns.forEach((col) => {
+      const colStr = String(col);
+      // Check for dangerous patterns in GROUP BY columns
+      if (
+        colStr.includes(';') ||
+        colStr.includes('--') ||
+        /\bDROP\b|\bDELETE\b|\bINSERT\b|\bUPDATE\b|\bUNION\b|\bCREATE\b|\bALTER\b|\bTRUNCATE\b/i.test(colStr)
+      ) {
+        throw new DatabaseError(
+          `Invalid GROUP BY column "${colStr}". Column names cannot contain SQL keywords or dangerous patterns.`,
+          'INVALID_GROUP_BY_COLUMN'
+        );
+      }
+    });
 
     const invalidColumns = columns.filter((col) => {
       const tableName = this.tableAlias || String(this.tableName);

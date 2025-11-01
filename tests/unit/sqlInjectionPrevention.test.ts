@@ -182,7 +182,7 @@ describe("SQL Injection Prevention", () => {
   });
 
   describe("orderBy injection prevention", () => {
-    it("should sanitize orderBy column names", async () => {
+    it("should reject orderBy with semicolons", async () => {
       const query = new TypedQuery<"users", TestSchema["users"]>(
         mockPool as any,
         "users"
@@ -192,7 +192,46 @@ describe("SQL Injection Prevention", () => {
         await query
           .orderBy("id; DROP TABLE users; --")
           .execute();
-      }).rejects.toThrow("Invalid SQL identifier");
+      }).rejects.toThrow(/Invalid ORDER BY column|Invalid SQL identifier/i);
+    });
+
+    it("should reject orderBy with DROP keyword", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query
+          .orderBy("id DROP TABLE users")
+          .execute();
+      }).rejects.toThrow(/Invalid ORDER BY column|DROP/i);
+    });
+
+    it("should reject orderBy with UNION keyword", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query
+          .orderBy("id UNION SELECT password FROM admin")
+          .execute();
+      }).rejects.toThrow(/Invalid ORDER BY column|UNION/i);
+    });
+
+    it("should reject orderBy with SQL comments", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query
+          .orderBy("id-- malicious")
+          .execute();
+      }).rejects.toThrow(/Invalid ORDER BY column/i);
     });
 
     it("should allow safe orderBy column names", async () => {
@@ -208,6 +247,88 @@ describe("SQL Injection Prevention", () => {
 
       const executedQuery = mockPool.getLastQuery();
       expect(executedQuery.text).toBe("SELECT id, name FROM users ORDER BY name DESC");
+    });
+  });
+
+  describe("groupBy injection prevention", () => {
+    it("should reject groupBy with semicolons", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query
+          .groupBy("id; DROP TABLE users; --")
+          .execute();
+      }).rejects.toThrow(/Invalid GROUP BY column/i);
+    });
+
+    it("should reject groupBy with DROP keyword", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query
+          .groupBy("id DROP TABLE users")
+          .execute();
+      }).rejects.toThrow(/Invalid GROUP BY column|DROP/i);
+    });
+
+    it("should reject groupBy with UNION keyword", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query
+          .groupBy("id UNION SELECT password FROM admin")
+          .execute();
+      }).rejects.toThrow(/Invalid GROUP BY column|UNION/i);
+    });
+
+    it("should reject groupBy with DELETE keyword", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query
+          .groupBy("id DELETE FROM users WHERE 1=1")
+          .execute();
+      }).rejects.toThrow(/Invalid GROUP BY column|DELETE/i);
+    });
+
+    it("should reject groupBy with SQL comments", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query
+          .groupBy("id-- malicious")
+          .execute();
+      }).rejects.toThrow(/Invalid GROUP BY column/i);
+    });
+
+    it("should allow safe groupBy column names", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await query
+        .select("name")
+        .groupBy("name")
+        .execute();
+
+      const executedQuery = mockPool.getLastQuery();
+      expect(executedQuery.text).toBe("SELECT name FROM users GROUP BY name");
     });
   });
 
