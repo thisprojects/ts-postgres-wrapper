@@ -1818,6 +1818,25 @@ export class TypedQuery<
     defaultValue?: any,
     partitionBy?: string[]
   ): this {
+    // Validate defaultValue to prevent SQL injection
+    if (defaultValue !== undefined) {
+      if (typeof defaultValue === 'string') {
+        throw new DatabaseError(
+          'LAG defaultValue cannot be a string. Use NULL, numbers, or booleans only.',
+          'INVALID_WINDOW_FUNCTION'
+        );
+      }
+      if (typeof defaultValue !== 'number' && typeof defaultValue !== 'boolean' && defaultValue !== null) {
+        throw new DatabaseError(
+          'LAG defaultValue must be a number, boolean, or null',
+          'INVALID_WINDOW_FUNCTION'
+        );
+      }
+      if (typeof defaultValue === 'number' && !Number.isFinite(defaultValue)) {
+        throw new DatabaseError('LAG defaultValue must be a finite number', 'INVALID_WINDOW_FUNCTION');
+      }
+    }
+
     const partition = partitionBy?.length
       ? `PARTITION BY ${partitionBy.map(c => this.qualifyColumnName(c)).join(", ")}`
       : "";
@@ -1837,6 +1856,25 @@ export class TypedQuery<
     defaultValue?: any,
     partitionBy?: string[]
   ): this {
+    // Validate defaultValue to prevent SQL injection
+    if (defaultValue !== undefined) {
+      if (typeof defaultValue === 'string') {
+        throw new DatabaseError(
+          'LEAD defaultValue cannot be a string. Use NULL, numbers, or booleans only.',
+          'INVALID_WINDOW_FUNCTION'
+        );
+      }
+      if (typeof defaultValue !== 'number' && typeof defaultValue !== 'boolean' && defaultValue !== null) {
+        throw new DatabaseError(
+          'LEAD defaultValue must be a number, boolean, or null',
+          'INVALID_WINDOW_FUNCTION'
+        );
+      }
+      if (typeof defaultValue === 'number' && !Number.isFinite(defaultValue)) {
+        throw new DatabaseError('LEAD defaultValue must be a finite number', 'INVALID_WINDOW_FUNCTION');
+      }
+    }
+
     const partition = partitionBy?.length
       ? `PARTITION BY ${partitionBy.map(c => this.qualifyColumnName(c)).join(", ")}`
       : "";

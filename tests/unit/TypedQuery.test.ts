@@ -2565,5 +2565,201 @@ describe("TypedQuery", () => {
           .execute();
       }).rejects.toThrow("Invalid SQL identifier");
     });
+
+    it("should reject string defaultValue in lag (SQL injection prevention)", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query
+          .select("name")
+          .lag("salary", 1, "'; DROP TABLE users; --", ["department"])
+          .execute();
+      }).rejects.toThrow("LAG defaultValue cannot be a string");
+    });
+
+    it("should reject string defaultValue in lead (SQL injection prevention)", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query
+          .select("name")
+          .lead("salary", 1, "'; DROP TABLE users; --", ["department"])
+          .execute();
+      }).rejects.toThrow("LEAD defaultValue cannot be a string");
+    });
+
+    it("should accept valid number defaultValue in lag", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await query
+        .select("name")
+        .lag("salary", 1, 100, ["department"])
+        .execute();
+
+      const sql = mockPool.getLastQuery().text;
+      expect(sql).toContain("LAG(salary, 1, 100) OVER (PARTITION BY department)");
+    });
+
+    it("should accept null defaultValue in lag", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await query
+        .select("name")
+        .lag("salary", 1, null, ["department"])
+        .execute();
+
+      const sql = mockPool.getLastQuery().text;
+      expect(sql).toContain("LAG(salary, 1, null) OVER (PARTITION BY department)");
+    });
+
+    it("should accept boolean defaultValue in lag", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await query
+        .select("name")
+        .lag("is_active", 1, false, ["department"])
+        .execute();
+
+      const sql = mockPool.getLastQuery().text;
+      expect(sql).toContain("LAG(is_active, 1, false) OVER (PARTITION BY department)");
+    });
+
+    it("should reject Infinity as defaultValue in lag", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query
+          .select("name")
+          .lag("salary", 1, Infinity, ["department"])
+          .execute();
+      }).rejects.toThrow("LAG defaultValue must be a finite number");
+    });
+
+    it("should reject NaN as defaultValue in lag", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query
+          .select("name")
+          .lag("salary", 1, NaN, ["department"])
+          .execute();
+      }).rejects.toThrow("LAG defaultValue must be a finite number");
+    });
+
+    it("should reject object as defaultValue in lag", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query
+          .select("name")
+          .lag("salary", 1, { value: 100 }, ["department"])
+          .execute();
+      }).rejects.toThrow("LAG defaultValue must be a number, boolean, or null");
+    });
+
+    it("should reject array as defaultValue in lag", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query
+          .select("name")
+          .lag("salary", 1, [100], ["department"])
+          .execute();
+      }).rejects.toThrow("LAG defaultValue must be a number, boolean, or null");
+    });
+
+    it("should accept valid number defaultValue in lead", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await query
+        .select("name")
+        .lead("salary", 1, 100, ["department"])
+        .execute();
+
+      const sql = mockPool.getLastQuery().text;
+      expect(sql).toContain("LEAD(salary, 1, 100) OVER (PARTITION BY department)");
+    });
+
+    it("should reject Infinity as defaultValue in lead", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query
+          .select("name")
+          .lead("salary", 1, Infinity, ["department"])
+          .execute();
+      }).rejects.toThrow("LEAD defaultValue must be a finite number");
+    });
+
+    it("should reject object as defaultValue in lead", async () => {
+      mockPool.setMockResults([]);
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query
+          .select("name")
+          .lead("salary", 1, { value: 100 }, ["department"])
+          .execute();
+      }).rejects.toThrow("LEAD defaultValue must be a number, boolean, or null");
+    });
   });
 });
