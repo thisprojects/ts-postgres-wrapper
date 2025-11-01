@@ -51,12 +51,32 @@ export class SetOperationsBuilder {
       // Renumber parameters in the operation query
       let renumberedQuery = op.query;
       if (op.params.length > 0) {
-        // Replace $1, $2, etc. with the correct parameter numbers
-        for (let i = op.params.length; i >= 1; i--) {
-          const oldParam = `$${i}`;
-          const newParam = `$${paramCounter + i - 1}`;
-          renumberedQuery = renumberedQuery.replace(new RegExp(`\\${oldParam}\\b`, 'g'), newParam);
+        // Find all parameter placeholders in the query
+        const paramMatches = renumberedQuery.match(/\$(\d+)/g) || [];
+        const paramNumbers = new Set(
+          paramMatches.map(match => parseInt(match.substring(1)))
+        );
+
+        // Sort in descending order to avoid double-replacement issues
+        const sortedParams = Array.from(paramNumbers).sort((a, b) => b - a);
+
+        // Create mapping of old param number to new param number
+        const paramMapping = new Map<number, number>();
+        for (let i = 1; i <= op.params.length; i++) {
+          paramMapping.set(i, paramCounter + i - 1);
         }
+
+        // Replace parameters using the mapping (process largest numbers first)
+        for (const oldNum of sortedParams) {
+          const newNum = paramMapping.get(oldNum);
+          if (newNum !== undefined) {
+            renumberedQuery = renumberedQuery.replace(
+              new RegExp(`\\$${oldNum}\\b`, 'g'),
+              `$${newNum}`
+            );
+          }
+        }
+
         paramCounter += op.params.length;
       }
 
