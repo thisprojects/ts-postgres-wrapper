@@ -14,6 +14,66 @@ export class WindowFunctionBuilder {
   ) {}
 
   /**
+   * Validate offset parameter for LAG/LEAD functions
+   */
+  private validateOffset(offset: number, functionName: string): void {
+    if (!Number.isInteger(offset) || offset < 0) {
+      throw new DatabaseError(
+        `${functionName} offset must be a non-negative integer`,
+        'INVALID_WINDOW_FUNCTION',
+        { query: '', params: [], detail: `offset: ${offset}` }
+      );
+    }
+  }
+
+  /**
+   * Validate and format defaultValue parameter for LAG/LEAD functions
+   * Returns the formatted SQL fragment or empty string
+   */
+  private validateAndFormatDefaultValue(defaultValue: any, functionName: string): string {
+    if (defaultValue === undefined) {
+      return "";
+    }
+
+    // Only allow safe primitive types
+    if (typeof defaultValue === 'number') {
+      if (!Number.isFinite(defaultValue)) {
+        throw new DatabaseError(
+          `${functionName} defaultValue must be a finite number`,
+          'INVALID_WINDOW_FUNCTION',
+          { query: '', params: [], detail: `defaultValue: ${defaultValue}` }
+        );
+      }
+      return `, ${defaultValue}`;
+    }
+
+    if (typeof defaultValue === 'boolean') {
+      return `, ${defaultValue}`;
+    }
+
+    if (defaultValue === null) {
+      return `, NULL`;
+    }
+
+    if (typeof defaultValue === 'string') {
+      // String values in window functions should use parameterized queries
+      // Since we can't use parameters in window function default values,
+      // we must reject string values to prevent SQL injection
+      throw new DatabaseError(
+        `${functionName} defaultValue cannot be a string. Use NULL, numbers, or booleans only.`,
+        'INVALID_WINDOW_FUNCTION',
+        { query: '', params: [], detail: 'String default values are not supported for security reasons' }
+      );
+    }
+
+    throw new DatabaseError(
+      `${functionName} defaultValue must be a number, boolean, or null`,
+      'INVALID_WINDOW_FUNCTION',
+      { query: '', params: [], detail: `defaultValue type: ${typeof defaultValue}` }
+    );
+  }
+
+  /**
    * Get all window function expressions
    */
   getFunctions(): string[] {
@@ -88,10 +148,14 @@ export class WindowFunctionBuilder {
     defaultValue?: any,
     partitionBy?: string[]
   ): void {
+    this.validateOffset(offset, 'LAG');
+
     const partition = partitionBy?.length
       ? `PARTITION BY ${partitionBy.map(c => this.qualifyColumn(c)).join(", ")}`
       : "";
-    const def = defaultValue !== undefined ? `, ${defaultValue}` : "";
+
+    const def = this.validateAndFormatDefaultValue(defaultValue, 'LAG');
+
     this.windowFunctions.push(
       `LAG(${this.qualifyColumn(column)}, ${offset}${def}) OVER (${partition})`.trim()
     );
@@ -106,10 +170,14 @@ export class WindowFunctionBuilder {
     defaultValue?: any,
     partitionBy?: string[]
   ): void {
+    this.validateOffset(offset, 'LEAD');
+
     const partition = partitionBy?.length
       ? `PARTITION BY ${partitionBy.map(c => this.qualifyColumn(c)).join(", ")}`
       : "";
-    const def = defaultValue !== undefined ? `, ${defaultValue}` : "";
+
+    const def = this.validateAndFormatDefaultValue(defaultValue, 'LEAD');
+
     this.windowFunctions.push(
       `LEAD(${this.qualifyColumn(column)}, ${offset}${def}) OVER (${partition})`.trim()
     );
