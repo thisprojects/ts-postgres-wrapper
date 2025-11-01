@@ -518,18 +518,57 @@ export class TypedPg<Schema extends Record<string, any> = Record<string, any>> {
     const client = await this.pool.connect();
 
     try {
+      // Runtime validation of transaction options to prevent SQL injection
+      if (options) {
+        // Validate isolation level
+        if (options.isolationLevel) {
+          const validIsolationLevels = new Set([
+            'READ UNCOMMITTED',
+            'READ COMMITTED',
+            'REPEATABLE READ',
+            'SERIALIZABLE'
+          ]);
+
+          if (!validIsolationLevels.has(options.isolationLevel)) {
+            throw new DatabaseError(
+              `Invalid isolation level: ${options.isolationLevel}. Must be one of: ${Array.from(validIsolationLevels).join(', ')}`,
+              'INVALID_ISOLATION_LEVEL',
+              { query: 'BEGIN', params: [], operation: 'transaction' }
+            );
+          }
+        }
+
+        // Validate readOnly is boolean
+        if (options.readOnly !== undefined && typeof options.readOnly !== 'boolean') {
+          throw new DatabaseError(
+            `Invalid readOnly option: ${options.readOnly}. Must be a boolean`,
+            'INVALID_TRANSACTION_OPTIONS',
+            { query: 'BEGIN', params: [], operation: 'transaction' }
+          );
+        }
+
+        // Validate deferrable is boolean
+        if (options.deferrable !== undefined && typeof options.deferrable !== 'boolean') {
+          throw new DatabaseError(
+            `Invalid deferrable option: ${options.deferrable}. Must be a boolean`,
+            'INVALID_TRANSACTION_OPTIONS',
+            { query: 'BEGIN', params: [], operation: 'transaction' }
+          );
+        }
+      }
+
       // Build BEGIN statement with transaction options
       let beginStatement = "BEGIN";
 
       if (options) {
         const parts: string[] = [];
 
-        // Add isolation level
+        // Add isolation level (already validated above)
         if (options.isolationLevel) {
           parts.push(`ISOLATION LEVEL ${options.isolationLevel}`);
         }
 
-        // Add read-only mode
+        // Add read-only mode (already validated above)
         if (options.readOnly) {
           parts.push("READ ONLY");
         }

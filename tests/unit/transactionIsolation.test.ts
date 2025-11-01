@@ -455,4 +455,157 @@ describe("Transaction Isolation", () => {
       expect(mockClient.release).toHaveBeenCalled();
     });
   });
+
+  describe("Transaction option SQL injection prevention", () => {
+    it("should reject invalid isolation level (SQL injection attempt)", async () => {
+      const mockClient = {
+        query: mockPool.query.bind(mockPool),
+        release: jest.fn(),
+        connect: jest.fn(function() { return Promise.resolve(this); })
+      };
+      mockPool.connect = jest.fn().mockResolvedValue(mockClient);
+
+      const maliciousIsolationLevel = "SERIALIZABLE; DROP TABLE users; --" as any;
+
+      await expect(db.transaction(async (tx) => {
+        await tx.table("users").execute();
+      }, {
+        isolationLevel: maliciousIsolationLevel
+      })).rejects.toThrow(/invalid isolation level/i);
+
+      expect(mockClient.release).toHaveBeenCalled();
+    });
+
+    it("should reject unknown isolation level", async () => {
+      const mockClient = {
+        query: mockPool.query.bind(mockPool),
+        release: jest.fn(),
+        connect: jest.fn(function() { return Promise.resolve(this); })
+      };
+      mockPool.connect = jest.fn().mockResolvedValue(mockClient);
+
+      const unknownLevel = "INVALID_LEVEL" as any;
+
+      await expect(db.transaction(async (tx) => {
+        await tx.table("users").execute();
+      }, {
+        isolationLevel: unknownLevel
+      })).rejects.toThrow(/invalid isolation level.*must be one of/i);
+
+      expect(mockClient.release).toHaveBeenCalled();
+    });
+
+    it("should reject non-boolean readOnly option", async () => {
+      const mockClient = {
+        query: mockPool.query.bind(mockPool),
+        release: jest.fn(),
+        connect: jest.fn(function() { return Promise.resolve(this); })
+      };
+      mockPool.connect = jest.fn().mockResolvedValue(mockClient);
+
+      const maliciousReadOnly = "true; DROP TABLE users; --" as any;
+
+      await expect(db.transaction(async (tx) => {
+        await tx.table("users").execute();
+      }, {
+        readOnly: maliciousReadOnly
+      })).rejects.toThrow(/invalid readOnly.*must be a boolean/i);
+
+      expect(mockClient.release).toHaveBeenCalled();
+    });
+
+    it("should reject non-boolean deferrable option", async () => {
+      const mockClient = {
+        query: mockPool.query.bind(mockPool),
+        release: jest.fn(),
+        connect: jest.fn(function() { return Promise.resolve(this); })
+      };
+      mockPool.connect = jest.fn().mockResolvedValue(mockClient);
+
+      const maliciousDeferrable = "true; DROP TABLE users; --" as any;
+
+      await expect(db.transaction(async (tx) => {
+        await tx.table("users").execute();
+      }, {
+        isolationLevel: 'SERIALIZABLE',
+        readOnly: true,
+        deferrable: maliciousDeferrable
+      })).rejects.toThrow(/invalid deferrable.*must be a boolean/i);
+
+      expect(mockClient.release).toHaveBeenCalled();
+    });
+
+    it("should reject injection via case variation in isolation level", async () => {
+      const mockClient = {
+        query: mockPool.query.bind(mockPool),
+        release: jest.fn(),
+        connect: jest.fn(function() { return Promise.resolve(this); })
+      };
+      mockPool.connect = jest.fn().mockResolvedValue(mockClient);
+
+      // Lowercase or mixed case should not match (case-sensitive validation)
+      const caseVariation = "serializable" as any;
+
+      await expect(db.transaction(async (tx) => {
+        await tx.table("users").execute();
+      }, {
+        isolationLevel: caseVariation
+      })).rejects.toThrow(/invalid isolation level/i);
+
+      expect(mockClient.release).toHaveBeenCalled();
+    });
+
+    it("should accept all valid isolation levels", async () => {
+      const mockClient = {
+        query: mockPool.query.bind(mockPool),
+        release: jest.fn(),
+        connect: jest.fn(function() { return Promise.resolve(this); })
+      };
+      mockPool.connect = jest.fn().mockResolvedValue(mockClient);
+
+      const validLevels: IsolationLevel[] = [
+        'READ UNCOMMITTED',
+        'READ COMMITTED',
+        'REPEATABLE READ',
+        'SERIALIZABLE'
+      ];
+
+      for (const level of validLevels) {
+        mockPool.clearQueryLog();
+        await db.transaction(async (tx) => {
+          await tx.table("users").execute();
+        }, {
+          isolationLevel: level
+        });
+
+        const queries = mockPool.getQueryLog();
+        expect(queries[0].text).toContain(`ISOLATION LEVEL ${level}`);
+      }
+
+      expect(mockClient.release).toHaveBeenCalledTimes(validLevels.length);
+    });
+
+    it("should properly sanitize all transaction options together", async () => {
+      const mockClient = {
+        query: mockPool.query.bind(mockPool),
+        release: jest.fn(),
+        connect: jest.fn(function() { return Promise.resolve(this); })
+      };
+      mockPool.connect = jest.fn().mockResolvedValue(mockClient);
+
+      await db.transaction(async (tx) => {
+        await tx.table("users").execute();
+      }, {
+        isolationLevel: 'SERIALIZABLE',
+        readOnly: true,
+        deferrable: true
+      });
+
+      const queries = mockPool.getQueryLog();
+      // Verify the BEGIN statement is exactly as expected with no injection
+      expect(queries[0].text).toBe("BEGIN ISOLATION LEVEL SERIALIZABLE READ ONLY DEFERRABLE");
+
+      expect(mockClient.release).toHaveBeenCalled();
+    });
+  });
 });
