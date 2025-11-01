@@ -536,19 +536,19 @@ describe("SQL Injection Prevention", () => {
       expect(executedQuery.text).toBe("SELECT users.id, users.name FROM users");
     });
 
-    it("should reject SQL injection in object syntax column names via sanitizeIdentifier", async () => {
+    it("should reject SQL injection in object syntax column names", async () => {
       const query = new TypedQuery<"users", TestSchema["users"]>(
         mockPool as any,
         "users"
       );
 
-      // Object syntax goes through sanitizeIdentifier which has its own SQL injection checks
+      // Object syntax validates the column name before processing
       await expect(async () => {
         await query.select({ column: "id; DROP TABLE users--", as: "user_id" }).execute();
-      }).rejects.toThrow("Invalid SQL identifier");
+      }).rejects.toThrow(/Invalid column name|Invalid SQL identifier/);
     });
 
-    it("should allow safe column names and expressions in object syntax", async () => {
+    it("should allow safe column names in object syntax", async () => {
       const query = new TypedQuery<"users", TestSchema["users"]>(
         mockPool as any,
         "users"
@@ -558,12 +558,303 @@ describe("SQL Injection Prevention", () => {
       await query.select({ column: "id", as: "user_id" }, { column: "name", as: "user_name" }).execute();
       let executedQuery = mockPool.getLastQuery();
       expect(executedQuery.text).toBe("SELECT id AS user_id, name AS user_name FROM users");
+    });
+  });
 
-      // Expressions created by library functions work (they're sanitized by qualifyColumnName)
-      mockPool.clearQueryLog();
-      await query.select({ column: "COUNT(*)", as: "total" }).execute();
-      executedQuery = mockPool.getLastQuery();
+  describe("Object syntax SQL injection prevention (HIGH SEVERITY)", () => {
+    it("should reject DROP TABLE injection via object syntax column", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      // Attempt to inject DROP TABLE via object column
+      await expect(async () => {
+        await query.select({ column: "id); DROP TABLE users; --", as: "evil" }).execute();
+      }).rejects.toThrow(/Invalid column name|Invalid SQL identifier/);
+    });
+
+    it("should reject semicolon injection via object syntax column", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query.select({ column: "id; DELETE FROM sessions--", as: "malicious" }).execute();
+      }).rejects.toThrow(/Invalid column name|Invalid SQL identifier/);
+    });
+
+    it("should reject UNION injection via object syntax column", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query.select({ column: "id UNION SELECT password FROM admin", as: "data" }).execute();
+      }).rejects.toThrow("Invalid column name");
+    });
+
+    it("should reject comment marker injection via object syntax column", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      // SQL comment markers should be rejected
+      await expect(async () => {
+        await query.select({ column: "id-- inject", as: "result" }).execute();
+      }).rejects.toThrow(/Invalid column name|Invalid SQL identifier/);
+
+      await expect(async () => {
+        await query.select({ column: "id/* comment */", as: "result" }).execute();
+      }).rejects.toThrow(/Invalid column name|Invalid SQL identifier/);
+    });
+
+    it("should reject function calls in object syntax without expr() marker", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      // Function calls should require expr() helper
+      await expect(async () => {
+        await query.select({ column: "COUNT(*)", as: "total" }).execute();
+      }).rejects.toThrow(/expr\(\) helper/);
+
+      await expect(async () => {
+        await query.select({ column: "MAX(id)", as: "max_id" }).execute();
+      }).rejects.toThrow(/expr\(\) helper/);
+
+      await expect(async () => {
+        await query.select({ column: "SUM(amount)", as: "total_amount" }).execute();
+      }).rejects.toThrow(/expr\(\) helper/);
+    });
+
+    it("should allow safe expressions with expr() helper in select()", async () => {
+      const { expr } = await import("../../src/types");
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      // With expr() helper, safe expressions should work
+      await query.select(expr("COUNT(*)", "total")).execute();
+      let executedQuery = mockPool.getLastQuery();
       expect(executedQuery.text).toBe("SELECT COUNT(*) AS total FROM users");
+
+      mockPool.clearQueryLog();
+      await query.select(expr("MAX(id)", "max_id"), expr("MIN(id)", "min_id")).execute();
+      executedQuery = mockPool.getLastQuery();
+      expect(executedQuery.text).toBe("SELECT MAX(id) AS max_id, MIN(id) AS min_id FROM users");
+    });
+
+    it("should reject UNION injection via expr() helper", async () => {
+      const { expr } = await import("../../src/types");
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      // expr() should still validate and reject UNION
+      await expect(async () => {
+        await query.select(expr("COUNT(*) UNION SELECT password FROM admin", "leak")).execute();
+      }).rejects.toThrow(/UNION/);
+    });
+
+    it("should reject DROP TABLE injection via expr() helper", async () => {
+      const { expr } = await import("../../src/types");
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      // expr() should validate and reject DROP
+      await expect(async () => {
+        await query.select(expr("id; DROP TABLE users; --", "evil")).execute();
+      }).rejects.toThrow(/semicolon|DROP/i);
+    });
+
+    it("should reject DELETE injection via expr() helper", async () => {
+      const { expr } = await import("../../src/types");
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query.select(expr("COUNT(*) DELETE FROM users WHERE 1=1", "bad")).execute();
+      }).rejects.toThrow(/DELETE/i);
+    });
+
+    it("should reject INSERT injection via expr() helper", async () => {
+      const { expr } = await import("../../src/types");
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query.select(expr("1 INSERT INTO admin VALUES('hacker')", "bad")).execute();
+      }).rejects.toThrow(/INSERT/i);
+    });
+
+    it("should reject UPDATE injection via expr() helper", async () => {
+      const { expr } = await import("../../src/types");
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query.select(expr("1 UPDATE users SET role='admin'", "bad")).execute();
+      }).rejects.toThrow(/UPDATE/i);
+    });
+
+    it("should reject SQL comments in expr() expressions", async () => {
+      const { expr } = await import("../../src/types");
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      // SQL comment markers should be rejected in expr()
+      await expect(async () => {
+        await query.select(expr("COUNT(*) -- malicious comment", "result")).execute();
+      }).rejects.toThrow(/comment/i);
+
+      await expect(async () => {
+        await query.select(expr("COUNT(*) /* block comment */", "result")).execute();
+      }).rejects.toThrow(/comment/i);
+    });
+
+    it("should reject CREATE/ALTER/TRUNCATE keywords via expr()", async () => {
+      const { expr } = await import("../../src/types");
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query.select(expr("1 CREATE TABLE evil(id INT)", "bad")).execute();
+      }).rejects.toThrow(/DDL or DML keywords/i);
+
+      await expect(async () => {
+        await query.select(expr("1 ALTER TABLE users ADD COLUMN hacked TEXT", "bad")).execute();
+      }).rejects.toThrow(/DDL or DML keywords/i);
+
+      await expect(async () => {
+        await query.select(expr("1 TRUNCATE TABLE users", "bad")).execute();
+      }).rejects.toThrow(/DDL or DML keywords/i);
+    });
+
+    it("should reject DELETE keyword injection via object syntax", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query.select({ column: "id DELETE FROM users WHERE 1=1", as: "bad" }).execute();
+      }).rejects.toThrow("Invalid column name");
+    });
+
+    it("should reject INSERT keyword injection via object syntax", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query.select({ column: "id INSERT INTO admin VALUES('hacker')", as: "bad" }).execute();
+      }).rejects.toThrow("Invalid column name");
+    });
+
+    it("should reject UPDATE keyword injection via object syntax", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query.select({ column: "id UPDATE users SET role='admin'", as: "bad" }).execute();
+      }).rejects.toThrow("Invalid column name");
+    });
+
+    it("should enforce validation on object syntax even with complex patterns", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      // Multiple injection attempts combined
+      await expect(async () => {
+        await query.select({
+          column: "id); DROP TABLE users; DELETE FROM sessions; --",
+          as: "totally_safe"
+        }).execute();
+      }).rejects.toThrow(/Invalid column name|Invalid SQL identifier/);
+    });
+
+    it("should validate both column and alias in object syntax", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      // Valid column but malicious alias
+      await expect(async () => {
+        await query.select({ column: "id", as: "name; DROP TABLE users--" }).execute();
+      }).rejects.toThrow("Invalid SQL identifier");
+
+      // Malicious column but valid alias
+      await expect(async () => {
+        await query.select({ column: "id; DROP TABLE users--", as: "user_id" }).execute();
+      }).rejects.toThrow(/Invalid column name|Invalid SQL identifier/);
+
+      // Both malicious
+      await expect(async () => {
+        await query.select({
+          column: "id; DROP TABLE users--",
+          as: "name; DROP TABLE sessions--"
+        }).execute();
+      }).rejects.toThrow(/Invalid column name|Invalid SQL identifier/);
+    });
+
+    it("should allow simple qualified column names in object syntax", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      // Qualified column names should work
+      await query.select({ column: "users.id", as: "user_id" }).execute();
+      const executedQuery = mockPool.getLastQuery();
+      expect(executedQuery.text).toBe("SELECT users.id AS user_id FROM users");
+    });
+
+    it("should protect against subquery injection in object syntax", async () => {
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      // Subqueries without proper markers should be restricted
+      await expect(async () => {
+        await query.select({
+          column: "(SELECT password FROM admin)",
+          as: "leaked_password"
+        }).execute();
+      }).rejects.toThrow("Invalid column name");
     });
   });
 
