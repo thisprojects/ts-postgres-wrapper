@@ -14,6 +14,26 @@ export class WindowFunctionBuilder {
   ) {}
 
   /**
+   * Validate array lengths for window functions to prevent DoS
+   */
+  private validateArrayLengths(partitionBy?: string[], orderBy?: [string, "ASC" | "DESC"][]): void {
+    if (partitionBy && partitionBy.length > 50) {
+      throw new DatabaseError(
+        'PARTITION BY column count exceeds maximum of 50',
+        'TOO_MANY_PARTITION_COLUMNS',
+        { query: '', params: [], detail: `count: ${partitionBy.length}` }
+      );
+    }
+    if (orderBy && orderBy.length > 50) {
+      throw new DatabaseError(
+        'ORDER BY column count in window function exceeds maximum of 50',
+        'TOO_MANY_ORDER_COLUMNS',
+        { query: '', params: [], detail: `count: ${orderBy.length}` }
+      );
+    }
+  }
+
+  /**
    * Validate offset parameter for LAG/LEAD functions
    */
   private validateOffset(offset: number, functionName: string): void {
@@ -104,6 +124,8 @@ export class WindowFunctionBuilder {
    * Add ROW_NUMBER() window function
    */
   addRowNumber(partitionBy?: string[], orderBy?: [string, "ASC" | "DESC"][]): void {
+    this.validateArrayLengths(partitionBy, orderBy);
+
     const partition = partitionBy?.length
       ? `PARTITION BY ${partitionBy.map(c => this.qualifyColumn(c)).join(", ")}`
       : "";
@@ -117,6 +139,8 @@ export class WindowFunctionBuilder {
    * Add RANK() window function
    */
   addRank(partitionBy?: string[], orderBy?: [string, "ASC" | "DESC"][]): void {
+    this.validateArrayLengths(partitionBy, orderBy);
+
     const partition = partitionBy?.length
       ? `PARTITION BY ${partitionBy.map(c => this.qualifyColumn(c)).join(", ")}`
       : "";
@@ -130,6 +154,8 @@ export class WindowFunctionBuilder {
    * Add DENSE_RANK() window function
    */
   addDenseRank(partitionBy?: string[], orderBy?: [string, "ASC" | "DESC"][]): void {
+    this.validateArrayLengths(partitionBy, orderBy);
+
     const partition = partitionBy?.length
       ? `PARTITION BY ${partitionBy.map(c => this.qualifyColumn(c)).join(", ")}`
       : "";

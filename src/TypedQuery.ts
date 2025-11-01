@@ -375,6 +375,51 @@ export class TypedQuery<
   }
 
   /**
+   * Validate parameter value for size to prevent DoS attacks
+   */
+  private validateParameterSize(value: any, context: string = "Parameter"): void {
+    if (typeof value === 'string') {
+      // 10MB limit for string parameters
+      const maxSize = 10 * 1024 * 1024;
+      if (value.length > maxSize) {
+        throw new DatabaseError(
+          `${context} exceeds maximum size of 10 MB`,
+          'PARAMETER_TOO_LARGE',
+          { query: '', params: [], detail: `length: ${value.length} bytes` }
+        );
+      }
+    } else if (Array.isArray(value)) {
+      // Recursively validate array elements
+      value.forEach((item, index) => {
+        this.validateParameterSize(item, `${context}[${index}]`);
+      });
+    }
+  }
+
+  /**
+   * Validate operator to prevent SQL injection at runtime
+   */
+  private validateOperator(operator: string): void {
+    const validOperators = new Set([
+      '=', '!=', '<>', '<', '>', '<=', '>=',
+      'LIKE', 'ILIKE', 'NOT LIKE', 'NOT ILIKE',
+      'IN', 'NOT IN', 'BETWEEN', 'IS NULL', 'IS NOT NULL',
+      '~', '~*', '!~', '!~*', // Regex operators
+      '->', '->>', '#>', '#>>',  // JSON operators
+      '?', '?|', '?&', '@>', '<@', '@@', '@?', '#-', '||'
+    ]);
+
+    const normalizedOp = operator.trim().toUpperCase();
+    if (!validOperators.has(normalizedOp) && !validOperators.has(operator.trim())) {
+      throw new DatabaseError(
+        `Invalid operator: ${operator}`,
+        'INVALID_OPERATOR',
+        { query: '', params: [], detail: `operator: ${operator}` }
+      );
+    }
+  }
+
+  /**
    * Add WHERE clause (supports both typed columns and string-based columns)
    */
   where<K extends ColumnNames<Row>>(
@@ -434,6 +479,22 @@ export class TypedQuery<
       | JSONOperator,
     value: any
   ): this {
+    // Validate operator at runtime (TypeScript types can be bypassed)
+    this.validateOperator(operator);
+
+    // Validate parameter size to prevent DoS
+    this.validateParameterSize(value, 'WHERE parameter');
+
+    // Check WHERE clause count limit
+    const whereCount = this.whereParams.length;
+    if (whereCount >= 500) {
+      throw new DatabaseError(
+        'WHERE clause count exceeds maximum of 500 conditions',
+        'TOO_MANY_WHERE_CONDITIONS',
+        { query: '', params: [], detail: `current count: ${whereCount}` }
+      );
+    }
+
     if (this.whereClause) {
       this.whereClause += " AND ";
     } else {
@@ -688,6 +749,26 @@ export class TypedQuery<
   ): this;
   orderBy(column: string, direction?: "ASC" | "DESC"): this;
   orderBy(column: any, direction: "ASC" | "DESC" = "ASC"): this {
+    // Validate direction at runtime (TypeScript types can be bypassed)
+    const normalizedDir = direction.trim().toUpperCase();
+    if (normalizedDir !== 'ASC' && normalizedDir !== 'DESC') {
+      throw new DatabaseError(
+        `Invalid ORDER BY direction: ${direction}. Must be ASC or DESC`,
+        'INVALID_DIRECTION',
+        { query: '', params: [], detail: `direction: ${direction}` }
+      );
+    }
+
+    // Check ORDER BY clause count limit (100 max)
+    const orderByCount = (this.orderByClause.match(/,/g) || []).length + (this.orderByClause ? 1 : 0);
+    if (orderByCount >= 100) {
+      throw new DatabaseError(
+        'ORDER BY clause count exceeds maximum of 100',
+        'TOO_MANY_ORDER_BY',
+        { query: '', params: [], detail: `current count: ${orderByCount}` }
+      );
+    }
+
     this.validateOrderByColumn(String(column));
     const qualifiedColumn = this.qualifyColumnName(String(column));
 
@@ -937,6 +1018,15 @@ export class TypedQuery<
   >(column: K, path: P): string;
   jsonPath(column: string, path: string[]): string;
   jsonPath(column: string, path: string[]): string {
+    // Validate path depth to prevent DoS
+    if (path.length > 20) {
+      throw new DatabaseError(
+        'JSON path exceeds maximum depth of 20 levels',
+        'PATH_TOO_DEEP',
+        { query: '', params: [], detail: `depth: ${path.length}` }
+      );
+    }
+
     const validatedPath = path.map((p) => this.validateJsonIdentifier(p, "JSON path component"));
     const pathStr = validatedPath
       .map((p) => `'${this.escapeSingleQuotes(p)}'`)
