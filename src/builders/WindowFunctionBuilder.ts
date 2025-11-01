@@ -88,10 +88,54 @@ export class WindowFunctionBuilder {
     defaultValue?: any,
     partitionBy?: string[]
   ): void {
+    // Validate offset is a safe integer
+    if (!Number.isInteger(offset) || offset < 0) {
+      throw new DatabaseError(
+        'LAG offset must be a non-negative integer',
+        'INVALID_WINDOW_FUNCTION',
+        { query: '', params: [], detail: `offset: ${offset}` }
+      );
+    }
+
     const partition = partitionBy?.length
       ? `PARTITION BY ${partitionBy.map(c => this.qualifyColumn(c)).join(", ")}`
       : "";
-    const def = defaultValue !== undefined ? `, ${defaultValue}` : "";
+
+    // Validate and sanitize defaultValue to prevent SQL injection
+    let def = "";
+    if (defaultValue !== undefined) {
+      // Only allow safe primitive types
+      if (typeof defaultValue === 'number') {
+        if (!Number.isFinite(defaultValue)) {
+          throw new DatabaseError(
+            'LAG defaultValue must be a finite number',
+            'INVALID_WINDOW_FUNCTION',
+            { query: '', params: [], detail: `defaultValue: ${defaultValue}` }
+          );
+        }
+        def = `, ${defaultValue}`;
+      } else if (typeof defaultValue === 'boolean') {
+        def = `, ${defaultValue}`;
+      } else if (defaultValue === null) {
+        def = `, NULL`;
+      } else if (typeof defaultValue === 'string') {
+        // String values in window functions should use parameterized queries
+        // Since we can't use parameters in window function default values,
+        // we must reject string values to prevent SQL injection
+        throw new DatabaseError(
+          'LAG defaultValue cannot be a string. Use NULL, numbers, or booleans only.',
+          'INVALID_WINDOW_FUNCTION',
+          { query: '', params: [], detail: 'String default values are not supported for security reasons' }
+        );
+      } else {
+        throw new DatabaseError(
+          'LAG defaultValue must be a number, boolean, or null',
+          'INVALID_WINDOW_FUNCTION',
+          { query: '', params: [], detail: `defaultValue type: ${typeof defaultValue}` }
+        );
+      }
+    }
+
     this.windowFunctions.push(
       `LAG(${this.qualifyColumn(column)}, ${offset}${def}) OVER (${partition})`.trim()
     );
@@ -106,10 +150,54 @@ export class WindowFunctionBuilder {
     defaultValue?: any,
     partitionBy?: string[]
   ): void {
+    // Validate offset is a safe integer
+    if (!Number.isInteger(offset) || offset < 0) {
+      throw new DatabaseError(
+        'LEAD offset must be a non-negative integer',
+        'INVALID_WINDOW_FUNCTION',
+        { query: '', params: [], detail: `offset: ${offset}` }
+      );
+    }
+
     const partition = partitionBy?.length
       ? `PARTITION BY ${partitionBy.map(c => this.qualifyColumn(c)).join(", ")}`
       : "";
-    const def = defaultValue !== undefined ? `, ${defaultValue}` : "";
+
+    // Validate and sanitize defaultValue to prevent SQL injection
+    let def = "";
+    if (defaultValue !== undefined) {
+      // Only allow safe primitive types
+      if (typeof defaultValue === 'number') {
+        if (!Number.isFinite(defaultValue)) {
+          throw new DatabaseError(
+            'LEAD defaultValue must be a finite number',
+            'INVALID_WINDOW_FUNCTION',
+            { query: '', params: [], detail: `defaultValue: ${defaultValue}` }
+          );
+        }
+        def = `, ${defaultValue}`;
+      } else if (typeof defaultValue === 'boolean') {
+        def = `, ${defaultValue}`;
+      } else if (defaultValue === null) {
+        def = `, NULL`;
+      } else if (typeof defaultValue === 'string') {
+        // String values in window functions should use parameterized queries
+        // Since we can't use parameters in window function default values,
+        // we must reject string values to prevent SQL injection
+        throw new DatabaseError(
+          'LEAD defaultValue cannot be a string. Use NULL, numbers, or booleans only.',
+          'INVALID_WINDOW_FUNCTION',
+          { query: '', params: [], detail: 'String default values are not supported for security reasons' }
+        );
+      } else {
+        throw new DatabaseError(
+          'LEAD defaultValue must be a number, boolean, or null',
+          'INVALID_WINDOW_FUNCTION',
+          { query: '', params: [], detail: `defaultValue type: ${typeof defaultValue}` }
+        );
+      }
+    }
+
     this.windowFunctions.push(
       `LEAD(${this.qualifyColumn(column)}, ${offset}${def}) OVER (${partition})`.trim()
     );
