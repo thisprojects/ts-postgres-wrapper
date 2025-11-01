@@ -250,6 +250,12 @@ const RESERVED_KEYWORDS = new Set([
  * Used for table names, column names, and other identifiers in SQL queries
  */
 export function sanitizeSqlIdentifier(identifier: string): string {
+  // PostgreSQL identifier length limit (NAMEDATALEN - 1 = 63 bytes)
+  // This prevents DoS attacks via extremely long identifiers
+  if (identifier.length > 63) {
+    throw new Error(`SQL identifier exceeds maximum length of 63 characters: ${identifier.substring(0, 20)}...`);
+  }
+
   // If identifier is already quoted, validate and return it
   if (identifier.startsWith('"') && identifier.endsWith('"')) {
     const unquoted = identifier.slice(1, -1);

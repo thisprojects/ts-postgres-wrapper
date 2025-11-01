@@ -3,6 +3,8 @@
  * Handles WITH clauses for complex queries
  */
 
+import { DatabaseError } from "../errors";
+
 export interface CteDefinition {
   name: string;
   query: string;
@@ -47,6 +49,15 @@ export class CteBuilder {
    * Build the WITH clause
    */
   buildWithClause(): string {
+    // Validate CTE count to prevent DoS
+    if (this.ctes.length > 50) {
+      throw new DatabaseError(
+        'CTE count exceeds maximum of 50',
+        'TOO_MANY_CTES',
+        { query: '', params: [], detail: `count: ${this.ctes.length}` }
+      );
+    }
+
     if (this.ctes.length === 0) {
       return "";
     }
