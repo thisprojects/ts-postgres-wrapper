@@ -461,7 +461,7 @@ export class TypedQuery<
     value: any
   ): this;
   where(
-    column: any,
+    column: string,
     operator:
       | "="
       | "!="
@@ -477,7 +477,7 @@ export class TypedQuery<
       | "IS NULL"
       | "IS NOT NULL"
       | JSONOperator,
-    value: any
+    value: unknown
   ): this {
     // Validate operator at runtime (TypeScript types can be bypassed)
     this.validateOperator(operator);
@@ -748,7 +748,7 @@ export class TypedQuery<
     direction?: "ASC" | "DESC"
   ): this;
   orderBy(column: string, direction?: "ASC" | "DESC"): this;
-  orderBy(column: any, direction: "ASC" | "DESC" = "ASC"): this {
+  orderBy(column: string, direction: "ASC" | "DESC" = "ASC"): this {
     // Validate direction at runtime (TypeScript types can be bypassed)
     const normalizedDir = direction.trim().toUpperCase();
     if (normalizedDir !== 'ASC' && normalizedDir !== 'DESC') {
@@ -853,7 +853,7 @@ export class TypedQuery<
    */
   groupBy<K extends ColumnNames<Row>>(...columns: K[]): this;
   groupBy(...columns: string[]): this;
-  groupBy(...columns: any[]): this {
+  groupBy(...columns: string[]): this {
     if (columns.length === 0) {
       throw new Error("GROUP BY clause requires at least one column");
     }
