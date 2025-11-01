@@ -12,10 +12,20 @@ export class SubqueryBuilder {
    */
   private static validateOperator(operator: string): string {
     const validOperators = new Set([
+      // Standard comparison operators
       '=', '!=', '<>', '<', '>', '<=', '>=',
+      // Pattern matching operators
       'LIKE', 'ILIKE', 'NOT LIKE', 'NOT ILIKE',
-      '~', '~*', '!~', '!~*', // Regex operators
-      '@@', '@>', '<@', // JSONB operators
+      // Regex operators
+      '~', '~*', '!~', '!~*',
+      // JSON/JSONB operators
+      '->', '->>', '#>', '#>>',        // JSON field access
+      '?', '?|', '?&',                 // JSON key existence
+      '@>', '<@',                      // JSONB containment
+      '@@', '@?',                      // JSONPath operators
+      '#-',                            // JSONB delete path
+      '||',                            // JSONB concatenation
+      // NULL checks
       'IS', 'IS NOT', 'IS DISTINCT FROM', 'IS NOT DISTINCT FROM'
     ]);
 

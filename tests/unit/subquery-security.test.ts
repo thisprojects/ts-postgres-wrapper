@@ -192,15 +192,86 @@ describe("SubqueryBuilder Security", () => {
       expect(result.clause).toContain("LIKE");
     });
 
-    it("should allow JSONB operators", () => {
+    it("should allow JSON field access operators", () => {
+      const jsonOperators = ['->', '->>', '#>', '#>>'];
+
+      jsonOperators.forEach((op) => {
+        const result = SubqueryBuilder.createComparisonSubquery(
+          "data",
+          op,
+          "SELECT field FROM json_fields",
+          []
+        );
+
+        expect(result.clause).toContain(op);
+      });
+    });
+
+    it("should allow JSON key existence operators", () => {
+      const keyOperators = ['?', '?|', '?&'];
+
+      keyOperators.forEach((op) => {
+        const result = SubqueryBuilder.createComparisonSubquery(
+          "data",
+          op,
+          "SELECT keys FROM json_keys",
+          []
+        );
+
+        expect(result.clause).toContain(op);
+      });
+    });
+
+    it("should allow JSONB containment operators", () => {
+      const containmentOperators = ['@>', '<@'];
+
+      containmentOperators.forEach((op) => {
+        const result = SubqueryBuilder.createComparisonSubquery(
+          "data",
+          op,
+          "SELECT config FROM configs",
+          []
+        );
+
+        expect(result.clause).toContain(op);
+      });
+    });
+
+    it("should allow JSONPath operators", () => {
+      const jsonPathOperators = ['@@', '@?'];
+
+      jsonPathOperators.forEach((op) => {
+        const result = SubqueryBuilder.createComparisonSubquery(
+          "data",
+          op,
+          "SELECT path FROM json_paths",
+          []
+        );
+
+        expect(result.clause).toContain(op);
+      });
+    });
+
+    it("should allow JSONB delete path operator", () => {
       const result = SubqueryBuilder.createComparisonSubquery(
         "data",
-        "@>",
-        "SELECT config FROM configs",
+        "#-",
+        "SELECT path FROM paths_to_delete",
         []
       );
 
-      expect(result.clause).toContain("@>");
+      expect(result.clause).toContain("#-");
+    });
+
+    it("should allow JSONB concatenation operator", () => {
+      const result = SubqueryBuilder.createComparisonSubquery(
+        "data",
+        "||",
+        "SELECT extra_data FROM additional_data",
+        []
+      );
+
+      expect(result.clause).toContain("||");
     });
 
     it("should reject invalid operators", () => {
