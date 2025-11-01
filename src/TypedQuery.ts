@@ -161,10 +161,37 @@ export class TypedQuery<
 
         return this.qualifyColumnName(col);
       } else {
+        // Object syntax - validate based on whether it's marked as a safe expression
+        const columnStr = String(col.column);
+
+        // If not marked as an expression (via expr() helper), validate like string columns
+        // EXCEPT for safe library-generated functions (jsonb_*, JSON operators, etc.)
+        if (!(col as any).__isExpression) {
+          // Check if this is a safe library-generated expression
+          const isSafeLibraryExpression = /^(jsonb_set|jsonb_insert|jsonb_concat|jsonb_build_object|jsonb_build_array|jsonb_delete_path|jsonb_object_keys|jsonb_typeof|jsonb_array_length)\(/.test(columnStr);
+          // Check for JSON operators but NOT parentheses (those are function calls)
+          const hasJsonOperator = /[@?#\[\]]|->|#-|\s-\s|\|\||::jsonb/.test(columnStr);
+
+          // For non-safe expressions, enforce validation
+          if (!isSafeLibraryExpression && !hasJsonOperator) {
+            if (
+              columnStr.includes('(') ||
+              columnStr.includes(';') ||
+              columnStr.includes('--') ||
+              /\bDROP\b|\bDELETE\b|\bINSERT\b|\bUPDATE\b|\bUNION\b/i.test(columnStr)
+            ) {
+              throw new Error(
+                `Invalid column name "${columnStr}". SQL expressions and functions must use expr() helper. ` +
+                `Example: select(expr("COUNT(*)", "total"))`
+              );
+            }
+          }
+        }
+
         // Always sanitize column names, even in object syntax
         // Object syntax goes through qualifyColumnName() which applies sanitizeIdentifier()
         // with appropriate security checks for complex expressions
-        const colExpr = this.qualifyColumnName(String(col.column));
+        const colExpr = this.qualifyColumnName(columnStr);
         return `${colExpr} AS ${this.sanitizeIdentifier(col.as)}`;
       }
     });

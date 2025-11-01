@@ -158,11 +158,13 @@ describe("Column Aliases", () => {
       );
     });
 
-    it("should support aliases with aggregate functions", async () => {
+    it("should support aliases with aggregate functions using expr()", async () => {
+      const { expr } = await import("../../src/types");
+
       await query
         .select(
-          { column: "COUNT(*)", as: "total" },
-          { column: "AVG(age)", as: "averageAge" }
+          expr("COUNT(*)", "total"),
+          expr("AVG(age)", "averageAge")
         )
         .groupBy("age")
         .execute();
