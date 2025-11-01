@@ -106,7 +106,25 @@ export class WhereBuilder<Row extends Record<string, any>> {
       | JSONOperator,
     value?: any
   ): void;
-  addWhere(column: any, operator: any, value?: any): void {
+  addWhere(
+    column: string,
+    operator:
+      | "="
+      | "!="
+      | ">"
+      | "<"
+      | ">="
+      | "<="
+      | "LIKE"
+      | "ILIKE"
+      | "NOT ILIKE"
+      | "IN"
+      | "BETWEEN"
+      | "IS NULL"
+      | "IS NOT NULL"
+      | JSONOperator,
+    value?: unknown
+  ): void {
     const qualifiedColumn = this.qualifyColumn(String(column));
 
     if (this.whereClause) {
@@ -214,7 +232,25 @@ export class WhereBuilder<Row extends Record<string, any>> {
       | JSONOperator,
     value?: any
   ): void;
-  addOrWhere(column: any, operator: any, value?: any): void {
+  addOrWhere(
+    column: string,
+    operator:
+      | "="
+      | "!="
+      | ">"
+      | "<"
+      | ">="
+      | "<="
+      | "LIKE"
+      | "ILIKE"
+      | "NOT ILIKE"
+      | "IN"
+      | "BETWEEN"
+      | "IS NULL"
+      | "IS NOT NULL"
+      | JSONOperator,
+    value?: unknown
+  ): void {
     const qualifiedColumn = this.qualifyColumn(String(column));
 
     if (this.whereClause) {
