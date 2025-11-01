@@ -64,31 +64,34 @@ export class SetOperationsBuilder {
       if (op.params.length > 0) {
         // Find all parameter placeholders in the query
         const paramMatches = renumberedQuery.match(/\$(\d+)/g) || [];
-        const paramNumbers = new Set(
+        const paramNumbers = Array.from(new Set(
           paramMatches.map(match => parseInt(match.substring(1)))
-        );
+        )).sort((a, b) => a - b); // Sort ascending for mapping
 
-        // Sort in descending order to avoid double-replacement issues
-        const sortedParams = Array.from(paramNumbers).sort((a, b) => b - a);
-
-        // Create mapping of old param number to new param number
+        // Create mapping: each unique parameter number gets sequential new number
+        // This handles sparse parameter numbers correctly
         const paramMapping = new Map<number, number>();
-        for (let i = 1; i <= op.params.length; i++) {
-          paramMapping.set(i, paramCounter + i - 1);
+        for (let i = 0; i < paramNumbers.length; i++) {
+          paramMapping.set(paramNumbers[i], paramCounter + i);
         }
 
-        // Replace parameters using the mapping (process largest numbers first)
-        for (const oldNum of sortedParams) {
+        // Use placeholder-based replacement to avoid any collision issues
+        // Phase 1: Replace with unique placeholders
+        for (const oldNum of paramNumbers) {
           const newNum = paramMapping.get(oldNum);
           if (newNum !== undefined) {
+            // Use a placeholder that cannot appear in SQL
             renumberedQuery = renumberedQuery.replace(
               new RegExp(`\\$${oldNum}\\b`, 'g'),
-              `$${newNum}`
+              `__PARAM_${newNum}__`
             );
           }
         }
 
-        paramCounter += op.params.length;
+        // Phase 2: Replace placeholders with final parameter format
+        renumberedQuery = renumberedQuery.replace(/__PARAM_(\d+)__/g, '$$$1');
+
+        paramCounter += paramNumbers.length;
       }
 
       fullQuery += ` ${op.type} ${renumberedQuery}`;
