@@ -632,7 +632,7 @@ describe("SQL Injection Prevention", () => {
       }).rejects.toThrow(/expr\(\) helper/);
     });
 
-    it("should allow expressions with expr() helper in select()", async () => {
+    it("should allow safe expressions with expr() helper in select()", async () => {
       const { expr } = await import("../../src/types");
 
       const query = new TypedQuery<"users", TestSchema["users"]>(
@@ -640,7 +640,7 @@ describe("SQL Injection Prevention", () => {
         "users"
       );
 
-      // With expr() helper, expressions should work
+      // With expr() helper, safe expressions should work
       await query.select(expr("COUNT(*)", "total")).execute();
       let executedQuery = mockPool.getLastQuery();
       expect(executedQuery.text).toBe("SELECT COUNT(*) AS total FROM users");
@@ -649,6 +649,112 @@ describe("SQL Injection Prevention", () => {
       await query.select(expr("MAX(id)", "max_id"), expr("MIN(id)", "min_id")).execute();
       executedQuery = mockPool.getLastQuery();
       expect(executedQuery.text).toBe("SELECT MAX(id) AS max_id, MIN(id) AS min_id FROM users");
+    });
+
+    it("should reject UNION injection via expr() helper", async () => {
+      const { expr } = await import("../../src/types");
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      // expr() should still validate and reject UNION
+      await expect(async () => {
+        await query.select(expr("COUNT(*) UNION SELECT password FROM admin", "leak")).execute();
+      }).rejects.toThrow(/UNION/);
+    });
+
+    it("should reject DROP TABLE injection via expr() helper", async () => {
+      const { expr } = await import("../../src/types");
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      // expr() should validate and reject DROP
+      await expect(async () => {
+        await query.select(expr("id; DROP TABLE users; --", "evil")).execute();
+      }).rejects.toThrow(/semicolon|DROP/i);
+    });
+
+    it("should reject DELETE injection via expr() helper", async () => {
+      const { expr } = await import("../../src/types");
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query.select(expr("COUNT(*) DELETE FROM users WHERE 1=1", "bad")).execute();
+      }).rejects.toThrow(/DELETE/i);
+    });
+
+    it("should reject INSERT injection via expr() helper", async () => {
+      const { expr } = await import("../../src/types");
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query.select(expr("1 INSERT INTO admin VALUES('hacker')", "bad")).execute();
+      }).rejects.toThrow(/INSERT/i);
+    });
+
+    it("should reject UPDATE injection via expr() helper", async () => {
+      const { expr } = await import("../../src/types");
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query.select(expr("1 UPDATE users SET role='admin'", "bad")).execute();
+      }).rejects.toThrow(/UPDATE/i);
+    });
+
+    it("should reject SQL comments in expr() expressions", async () => {
+      const { expr } = await import("../../src/types");
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      // SQL comment markers should be rejected in expr()
+      await expect(async () => {
+        await query.select(expr("COUNT(*) -- malicious comment", "result")).execute();
+      }).rejects.toThrow(/comment/i);
+
+      await expect(async () => {
+        await query.select(expr("COUNT(*) /* block comment */", "result")).execute();
+      }).rejects.toThrow(/comment/i);
+    });
+
+    it("should reject CREATE/ALTER/TRUNCATE keywords via expr()", async () => {
+      const { expr } = await import("../../src/types");
+
+      const query = new TypedQuery<"users", TestSchema["users"]>(
+        mockPool as any,
+        "users"
+      );
+
+      await expect(async () => {
+        await query.select(expr("1 CREATE TABLE evil(id INT)", "bad")).execute();
+      }).rejects.toThrow(/DDL or DML keywords/i);
+
+      await expect(async () => {
+        await query.select(expr("1 ALTER TABLE users ADD COLUMN hacked TEXT", "bad")).execute();
+      }).rejects.toThrow(/DDL or DML keywords/i);
+
+      await expect(async () => {
+        await query.select(expr("1 TRUNCATE TABLE users", "bad")).execute();
+      }).rejects.toThrow(/DDL or DML keywords/i);
     });
 
     it("should reject DELETE keyword injection via object syntax", async () => {

@@ -164,9 +164,13 @@ export class TypedQuery<
         // Object syntax - validate based on whether it's marked as a safe expression
         const columnStr = String(col.column);
 
-        // If not marked as an expression (via expr() helper), validate like string columns
-        // EXCEPT for safe library-generated functions (jsonb_*, JSON operators, etc.)
-        if (!(col as any).__isExpression) {
+        // If marked as an expression (via expr() helper), validate it for dangerous patterns
+        if ((col as any).__isExpression) {
+          this.validateExpression(columnStr, "Column expression");
+        } else {
+          // If not marked as an expression, validate like string columns
+          // EXCEPT for safe library-generated functions (jsonb_*, JSON operators, etc.)
+
           // Check if this is a safe library-generated expression
           const isSafeLibraryExpression = /^(jsonb_set|jsonb_insert|jsonb_concat|jsonb_build_object|jsonb_build_array|jsonb_delete_path|jsonb_object_keys|jsonb_typeof|jsonb_array_length)\(/.test(columnStr);
           // Check for JSON operators but NOT parentheses (those are function calls)
